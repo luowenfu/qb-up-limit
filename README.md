@@ -2,7 +2,7 @@
 
 # 项目介绍
 
-> 本项目由［Ai］制作，不评判任何运营商行为，仅供学习测试
+> 本项目由Ai制作，不评判任何运营商行为，仅供学习测试
 
 **qB-达量限速管理**，带 Web，支持多设备，根据周期规则达到阈值后自动调整上传限速；可选集成 **Emby**，统计外网播放相关上行流量。
 
@@ -44,9 +44,9 @@ services:
     volumes:
       # 运行时数据：配置、数据库、密钥、日志（首次启动自动创建）
       - ./data:/data
-      # 可选：首次启动种子配置（复制 config.yaml.example 为 config.yaml）
+      # 可选：配置文件单独映射
       - ./config/config.yaml:/config/config.yaml:ro
-      # 可选：Emby 容器外网流量统计（只读挂载 Docker Socket）
+      # 可选：Emby功能开启条件，必需采用docker运行（只读挂载 Docker Socket）
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
 ```
