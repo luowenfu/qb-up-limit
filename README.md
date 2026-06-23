@@ -34,7 +34,7 @@
 ```bash
 services:
   qb-up-limit:
-    image: qb-up-limit:latest
+    image: luowenfu/qb-up-limit:latest
     container_name: qb-up-limit
     restart: unless-stopped
     ports:
