@@ -1,7 +1,7 @@
 services:
   qb-up-limit:
     build: .
-    image: qb-up-limit:latest
+    image: ghcr.io/luowenfu/qb-up-limit:v1.61
     container_name: qb-up-limit
     restart: unless-stopped
     ports:
