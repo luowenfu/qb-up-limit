@@ -69,20 +69,7 @@ services:
 
 
 
-## 项目结构
-
-```
-app/                  # Python 后端与 Web 静态资源
-  main.py             # 入口
-  scheduler.py        # qB 流量采集与限速调度
-  emby_scheduler.py   # Emby 会话与流量（可选功能）
-  web/                # Flask API 与前端页面
-data/                 # 运行时数据
-Dockerfile
-requirements.txt
-```
-
-
+## 
 
 ## 安全提示（开源 / 部署前必读）
 
