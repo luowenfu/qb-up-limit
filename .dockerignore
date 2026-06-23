@@ -2,13 +2,11 @@
 data/
 test_data/
 md/
-.dockerignore
-.gitignore
+
 # 文档与说明
 *.md
 README*
 LICENSE*
-GitHub命令.md
 
 # Python 缓存与编译产物
 __pycache__/
