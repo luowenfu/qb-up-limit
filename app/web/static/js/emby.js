@@ -933,7 +933,7 @@ async function refreshEmbyAll(forceRender = false, silent = false) {
     await refreshEmbyStatus(forceRender, silent);
     if (embyCurrentTab === 'events') await loadEmbyEvents(silent);
     if (typeof currentTab !== 'undefined' && currentTab === 'syslogs'
-        && typeof getDeviceTypeFilter === 'function' && getDeviceTypeFilter() === 'emby') {
+        && typeof getSyslogTypeFilter === 'function' && getSyslogTypeFilter() === 'emby') {
         await loadEmbySystemLogs(silent);
     }
     if (embyCurrentTab === 'stats' && document.getElementById('chartInstance')?.value
@@ -1025,7 +1025,9 @@ function updateEmbyInstanceSelects(instances) {
     let eventInstanceChanged = false;
     const sel = document.getElementById('embyEventInstance');
     if (sel) {
-        const prev = sel.value;
+        const prev = sel.value
+            || sessionStorage.getItem('qb-up-limit-event-instance-emby')
+            || '';
         sel.innerHTML = '';
         names.forEach(name => {
             const opt = document.createElement('option');
@@ -1040,10 +1042,15 @@ function updateEmbyInstanceSelects(instances) {
             if (prev !== next) eventInstanceChanged = true;
             sel.value = next;
         }
+        if (sel.value) {
+            sessionStorage.setItem('qb-up-limit-event-instance-emby', sel.value);
+        }
     }
     const syslogSel = document.getElementById('embySyslogInstance');
     if (syslogSel) {
-        const prevSyslog = syslogSel.value;
+        const prevSyslog = syslogSel.value
+            || sessionStorage.getItem('qb-up-limit-syslog-instance-emby')
+            || '';
         syslogSel.innerHTML = '';
         syslogSel.add(new Option('全部设备', ''));
         names.forEach(name => {
@@ -1057,9 +1064,11 @@ function updateEmbyInstanceSelects(instances) {
             syslogSel.value = '';
         }
         if (syslogChanged && typeof currentTab !== 'undefined' && currentTab === 'syslogs'
-            && typeof getDeviceTypeFilter === 'function' && getDeviceTypeFilter() === 'emby') {
-            loadEmbySystemLogs(true);
+            && typeof getSyslogTypeFilter === 'function' && getSyslogTypeFilter() === 'emby'
+            && typeof loadSyslogsForCurrentType === 'function') {
+            loadSyslogsForCurrentType(true);
         }
+        sessionStorage.setItem('qb-up-limit-syslog-instance-emby', syslogSel.value || '');
     }
     if (eventInstanceChanged && embyCurrentTab === 'events') {
         loadEmbyEvents(true);
@@ -1069,9 +1078,15 @@ function updateEmbyInstanceSelects(instances) {
         if (typeof populateChartInstanceSelect === 'function') {
             populateChartInstanceSelect(instances, 'emby');
         }
-        if (typeof currentTab !== 'undefined' && currentTab === 'stats'
-            && typeof updateChart === 'function') {
-            updateChart(true);
+        if (typeof currentTab !== 'undefined' && currentTab === 'stats') {
+            (async () => {
+                if (typeof refreshChartPlaybackUsers === 'function') {
+                    await refreshChartPlaybackUsers();
+                }
+                if (typeof updateChart === 'function') {
+                    await updateChart(true);
+                }
+            })();
         }
     }
 }
@@ -1133,17 +1148,33 @@ function getEmbyDataPanelAccentClass(inst) {
 }
 
 function buildEmbyApiPopoverContent(inst) {
-    const addr = escapeHtml(formatEmbyAddress(inst));
+    const dataStart = inst.data_start_time && typeof formatTriggerDateTime === 'function'
+        ? formatTriggerDateTime(inst.data_start_time)
+        : '--';
     if (inst.api_online) {
+        const raw = inst.online_since || '';
+        const time = raw && typeof formatTriggerDateTime === 'function'
+            ? formatTriggerDateTime(raw)
+            : '--';
         return `
             <div class="badge-popover-title">Emby API 在线</div>
-            <div class="badge-popover-meta badge-popover-meta--emph">${addr}</div>
-            <div class="badge-popover-meta">可读取播放会话与事件日志</div>`;
+            <div class="badge-popover-meta">最近上线时间</div>
+            <div class="badge-popover-meta badge-popover-meta--emph">${escapeHtml(time)}</div>
+            <div class="badge-popover-divider badge-popover-divider--partial"></div>
+            <div class="badge-popover-meta">数据起始时间</div>
+            <div class="badge-popover-meta badge-popover-meta--emph">${escapeHtml(dataStart)}</div>`;
     }
+    const raw = inst.offline_since || inst.last_update || '';
+    const time = raw && typeof formatTriggerDateTime === 'function'
+        ? formatTriggerDateTime(raw)
+        : '--';
     return `
         <div class="badge-popover-title">Emby API 离线</div>
-        <div class="badge-popover-meta">${addr}</div>
-        <div class="badge-popover-meta">请检查地址、端口与 API Key</div>`;
+        <div class="badge-popover-meta">最近离线时间</div>
+        <div class="badge-popover-meta badge-popover-meta--emph">${escapeHtml(time)}</div>
+        <div class="badge-popover-divider badge-popover-divider--partial"></div>
+        <div class="badge-popover-meta">数据起始时间</div>
+        <div class="badge-popover-meta badge-popover-meta--emph">${escapeHtml(dataStart)}</div>`;
 }
 
 function buildEmbyAddressEndpointHTML(inst) {
@@ -1437,6 +1468,39 @@ function createEmbyInstanceCard(inst) {
     return card;
 }
 
+function patchEmbyAddressPresence(inst, card) {
+    const head = card.querySelector('.info-panel-basic-head');
+    if (!head || (typeof hasHoveredStatusBadge === 'function' && hasHoveredStatusBadge(head))) return;
+
+    const statusClass = inst.api_online ? 'online' : 'offline';
+    const popoverHtml = buildEmbyApiPopoverContent(inst);
+    const wrap = head.querySelector('.info-endpoint-presence-wrap');
+
+    if (wrap) {
+        const variantClass = `status-badge-wrap--${statusClass}`;
+        if (!wrap.classList.contains(variantClass)) {
+            wrap.outerHTML = buildEmbyAddressEndpointHTML(inst);
+            return;
+        }
+        const icon = wrap.querySelector('.info-endpoint-icon');
+        if (icon) {
+            icon.classList.remove('info-endpoint-icon--online', 'info-endpoint-icon--offline');
+            icon.classList.add(`info-endpoint-icon--${statusClass}`);
+            icon.setAttribute('aria-label', inst.api_online ? 'API 在线' : 'API 离线');
+        }
+        const popover = wrap.querySelector('.status-badge-popover');
+        if (popover && typeof setInnerHtmlIfChanged === 'function') {
+            setInnerHtmlIfChanged(popover, popoverHtml);
+        }
+        return;
+    }
+
+    const legacyIcon = head.querySelector('.info-section-icon--endpoint:not(.info-endpoint-icon)');
+    if (legacyIcon) {
+        legacyIcon.outerHTML = buildEmbyAddressEndpointHTML(inst);
+    }
+}
+
 function patchEmbyCardMetrics(inst, card) {
     const recent = getEmbyRecentDisplays(inst);
     const refreshSec = recent.refreshSec;
@@ -1472,6 +1536,8 @@ function patchEmbyCardMetrics(inst, card) {
     const count = getEmbyActivePlaybackSessions(inst).length;
     const countBadge = card.querySelector('[data-field="session-count-badge"] span');
     if (countBadge) countBadge.textContent = `${count} 路播放`;
+
+    patchEmbyAddressPresence(inst, card);
 
     const sessionsTitle = card.querySelector('[data-field="sessions-title"]');
     if (sessionsTitle) {
@@ -2095,7 +2161,8 @@ function syncEmbyEventPlaybackUserFilterVisibility() {
 function refreshEmbyEventPlaybackUsers(records) {
     const select = document.getElementById('embyEventPlaybackUser');
     if (!select) return;
-    const prev = select.value;
+    const persisted = sessionStorage.getItem('qb-up-limit-emby-event-playback-user') || '';
+    const prev = select.value || persisted;
     const seen = new Set();
     const names = [];
     (records || []).forEach((rec) => {
@@ -2115,6 +2182,7 @@ function refreshEmbyEventPlaybackUsers(records) {
     if (prev && [...select.options].some((o) => o.value === prev)) {
         select.value = prev;
     }
+    sessionStorage.setItem('qb-up-limit-emby-event-playback-user', select.value || '');
 }
 
 function filterPlaybackRecordsByUser(records) {
@@ -2125,14 +2193,17 @@ function filterPlaybackRecordsByUser(records) {
 
 function onEmbyEventLogTypeChange() {
     syncEmbyEventPlaybackUserFilterVisibility();
+    if (typeof persistChartControls === 'function') persistChartControls();
     loadEmbyEvents();
 }
 
 function onEmbyEventPlaybackUserChange() {
+    if (typeof persistChartControls === 'function') persistChartControls();
     renderPlaybackRecords();
 }
 
 async function loadEmbyEvents(silent = false) {
+    if (typeof persistChartControls === 'function') persistChartControls();
     syncEmbyEventPlaybackUserFilterVisibility();
     if (getEmbyEventLogType() === 'activity') {
         return loadEmbyActivityLog(silent);

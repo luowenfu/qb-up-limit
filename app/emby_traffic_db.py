@@ -1,9 +1,11 @@
 """Emby 容器流量 SQLite 存储（与 qB 数据隔离）"""
 
 import logging
+import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import traffic_db
 
@@ -107,6 +109,24 @@ def init_db():
             _emby_schema_ensured = True
         finally:
             conn.close()
+    _run_pending_migrations()
+
+
+def _ensure_traffic_timezone_from_config():
+    """迁移/重建前确保与配置一致的时区（不依赖 qB scheduler 是否已启动）。"""
+    try:
+        import config_manager
+        config = config_manager.ensure_config()
+        tz_name = config_manager.get_global_config(config).get(
+            'timezone', 'Asia/Shanghai',
+        )
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo('Asia/Shanghai')
+        traffic_db.set_timezone(tz)
+    except Exception as e:
+        logger.warning(f'读取配置时区失败，使用系统本地时间: {e}')
 
 
 def _get_last_total(c, instance_name: str, column: str) -> int:
@@ -283,6 +303,23 @@ def update_instance_status(instance_name: str, is_online: bool = None,
                     values + [instance_name],
                 )
             conn.commit()
+        finally:
+            conn.close()
+
+
+def get_data_start_time(instance_name: str):
+    """获取该 Emby 设备流量数据的最早记录时间"""
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('''
+                SELECT MIN(hour_start) as start_time
+                FROM emby_traffic_hourly
+                WHERE instance_name = ?
+            ''', (instance_name,))
+            row = c.fetchone()
+            return row['start_time'] if row and row['start_time'] else None
         finally:
             conn.close()
 
@@ -773,8 +810,7 @@ def _normalize_stopped_at(stopped_at: str) -> str:
         text = text[:-1] + '+00:00'
     try:
         dt = datetime.fromisoformat(text)
-        if dt.tzinfo is not None:
-            dt = dt.replace(tzinfo=None)
+        dt = traffic_db._to_local_naive(dt)
         return dt.strftime('%Y-%m-%d %H:%M:%S')
     except (TypeError, ValueError):
         return text.replace('T', ' ')[:19]
@@ -783,6 +819,144 @@ def _normalize_stopped_at(stopped_at: str) -> str:
 def _hour_start_from_stopped(stopped_at: str) -> str:
     text = _normalize_stopped_at(stopped_at)
     return text[:13] + ':00:00'
+
+
+def _iter_playback_records_for_rebuild(instance_name: str = None):
+    """遍历播放记录 JSON，供重建外网用户上行聚合使用。"""
+    import playback_record_store
+    from emby_storage_paths import EMBY_EVENTS_DIR
+    from secrets_store import _read_json
+
+    playback_record_store._migrate_all_stores_once()
+
+    def yield_from_store(inst: str, data: dict):
+        for rec in data.get('records') or []:
+            item = dict(rec)
+            item.setdefault('instance_name', inst)
+            yield item
+
+    if instance_name:
+        store = playback_record_store._load_store(instance_name)
+        inst = store.get('instance_name') or instance_name
+        yield from yield_from_store(inst, store)
+        return
+
+    if not os.path.isdir(EMBY_EVENTS_DIR):
+        return
+    for fname in os.listdir(EMBY_EVENTS_DIR):
+        if not fname.endswith('.json'):
+            continue
+        data = _read_json(os.path.join(EMBY_EVENTS_DIR, fname), {})
+        if not isinstance(data.get('records'), list):
+            continue
+        inst = data.get('instance_name') or ''
+        yield from yield_from_store(inst, data)
+
+
+def rebuild_playback_upload_stats(instance_name: str = None) -> dict:
+    """从播放记录 JSON 重建外网用户上行事实表与小时聚合。"""
+    _ensure_emby_schema()
+    _ensure_traffic_timezone_from_config()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if instance_name:
+                c.execute(
+                    'DELETE FROM emby_playback_upload_facts WHERE instance_name = ?',
+                    (instance_name,),
+                )
+                c.execute(
+                    'DELETE FROM emby_playback_upload_hourly WHERE instance_name = ?',
+                    (instance_name,),
+                )
+            else:
+                c.execute('DELETE FROM emby_playback_upload_facts')
+                c.execute('DELETE FROM emby_playback_upload_hourly')
+            conn.commit()
+        finally:
+            conn.close()
+
+    stats = {'facts': 0, 'skipped': 0, 'instances': set()}
+    for rec in _iter_playback_records_for_rebuild(instance_name):
+        if rec.get('status') == 'playing':
+            continue
+        if not rec.get('is_remote'):
+            continue
+        upload = rec.get('estimated_upload_bytes')
+        if upload is None or int(upload) <= 0:
+            continue
+        inst = (rec.get('instance_name') or '').strip()
+        user_name = (rec.get('user_name') or '').strip()
+        if not inst or not user_name:
+            stats['skipped'] += 1
+            continue
+        ok = save_playback_upload_fact(
+            inst,
+            int(rec.get('id') or 0),
+            user_name,
+            rec.get('user_id') or '',
+            rec.get('stopped_at') or rec.get('last_tick_at') or '',
+            int(upload),
+            rec.get('series_name') or '',
+            rec.get('episode_label') or '',
+        )
+        if ok:
+            stats['facts'] += 1
+            stats['instances'].add(inst)
+        else:
+            stats['skipped'] += 1
+    stats['instances'] = sorted(stats['instances'])
+    return stats
+
+
+def _run_pending_migrations():
+    _ensure_traffic_timezone_from_config()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS emby_schema_migrations (
+                    name TEXT PRIMARY KEY,
+                    applied_at DATETIME NOT NULL
+                )
+            ''')
+            c.execute(
+                'SELECT 1 FROM emby_schema_migrations WHERE name = ?',
+                ('playback_upload_local_timezone_v1',),
+            )
+            if c.fetchone():
+                return
+            conn.commit()
+        finally:
+            conn.close()
+
+    try:
+        stats = rebuild_playback_upload_stats()
+        with _lock:
+            conn = traffic_db.get_conn()
+            try:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO emby_schema_migrations (name, applied_at)
+                    VALUES (?, ?)
+                ''', (
+                    'playback_upload_local_timezone_v1',
+                    _now().strftime('%Y-%m-%d %H:%M:%S'),
+                ))
+                conn.commit()
+                logger.info(
+                    '迁移 playback_upload_local_timezone_v1 完成: '
+                    f'重建 {stats["facts"]} 条外网播放上行记录'
+                )
+            finally:
+                conn.close()
+    except Exception as e:
+        logger.error(
+            f'迁移 playback_upload_local_timezone_v1 失败: {e}',
+            exc_info=True,
+        )
 
 
 def save_playback_upload_fact(instance_name: str, segment_id: int,
@@ -1080,6 +1254,255 @@ def get_playback_upload_cycle_stats(instance_name: str, user_name: str,
                     WHERE instance_name = ? AND user_name = ?
                       AND stopped_at >= ? AND stopped_at < ?
                 ''', (name, user, start_s, end_s))
+                row = c.fetchone()
+                cycle_start = p.get('cycle_start')
+                if hasattr(cycle_start, 'strftime'):
+                    cycle_start_label = cycle_start.strftime('%Y-%m-%d')
+                else:
+                    cycle_start_label = str(cycle_start)[:10]
+                result.append({
+                    'period': p.get('period') or cycle_start_label,
+                    'cycle_start': cycle_start_label,
+                    'total_bytes': int(row['total']) if row else 0,
+                    'backfilled_bytes': 0,
+                })
+        finally:
+            conn.close()
+    return result
+
+
+PLAYBACK_ALL_USERS_TOKEN = '__all_users__'
+
+
+def get_playback_upload_hourly_stats_all_users(instance_name: str,
+                                             hours: int = 24,
+                                             start: str = None, end: str = None) -> list:
+    name = (instance_name or '').strip()
+    if not name:
+        return []
+    _ensure_emby_schema()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if start and end:
+                start_s = traffic_db._normalize_range_start(start)
+                end_s = traffic_db._normalize_range_end_exclusive(end, hourly=True)
+                c.execute('''
+                    SELECT hour_start AS hour, SUM(uploaded_bytes) AS total_bytes
+                    FROM emby_playback_upload_hourly
+                    WHERE instance_name = ?
+                      AND hour_start >= ? AND hour_start < ?
+                    GROUP BY hour_start
+                    ORDER BY hour_start
+                ''', (name, start_s, end_s))
+            else:
+                cutoff = _cutoff_str(hours=hours)
+                c.execute('''
+                    SELECT hour_start AS hour, SUM(uploaded_bytes) AS total_bytes
+                    FROM emby_playback_upload_hourly
+                    WHERE instance_name = ? AND hour_start >= ?
+                    GROUP BY hour_start
+                    ORDER BY hour_start
+                ''', (name, cutoff))
+            return [dict(r) for r in c.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_playback_upload_daily_stats_all_users(instance_name: str,
+                                            days: int = 31,
+                                            start: str = None, end: str = None) -> list:
+    name = (instance_name or '').strip()
+    if not name:
+        return []
+    _ensure_emby_schema()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if start and end:
+                start_s = traffic_db._normalize_range_start(start)
+                end_s = traffic_db._normalize_range_end_exclusive(end, hourly=False)
+                c.execute('''
+                    SELECT date(stopped_at) AS day,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ?
+                      AND stopped_at >= ? AND stopped_at < ?
+                    GROUP BY date(stopped_at)
+                    ORDER BY day
+                ''', (name, start_s, end_s))
+            else:
+                cutoff = _cutoff_str(days=days)
+                c.execute('''
+                    SELECT date(stopped_at) AS day,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ? AND stopped_at >= ?
+                    GROUP BY date(stopped_at)
+                    ORDER BY day
+                ''', (name, cutoff))
+            return [{'day': r['day'], 'total_bytes': int(r['total_bytes'] or 0)}
+                    for r in c.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_playback_upload_monthly_stats_all_users(instance_name: str,
+                                                months: int = 12,
+                                                start: str = None, end: str = None) -> list:
+    name = (instance_name or '').strip()
+    if not name:
+        return []
+    _ensure_emby_schema()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if start and end:
+                start_s = traffic_db._normalize_range_start(start)
+                end_s = traffic_db._normalize_range_end_exclusive(end, hourly=False)
+                c.execute('''
+                    SELECT strftime('%Y-%m', stopped_at) AS month,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ?
+                      AND stopped_at >= ? AND stopped_at < ?
+                    GROUP BY strftime('%Y-%m', stopped_at)
+                    ORDER BY month
+                ''', (name, start_s, end_s))
+            else:
+                cutoff = _cutoff_str(days=months * 31)
+                c.execute('''
+                    SELECT strftime('%Y-%m', stopped_at) AS month,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ? AND stopped_at >= ?
+                    GROUP BY strftime('%Y-%m', stopped_at)
+                    ORDER BY month
+                ''', (name, cutoff))
+            return [{'month': r['month'], 'total_bytes': int(r['total_bytes'] or 0)}
+                    for r in c.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_playback_upload_weekly_stats_all_users(instance_name: str,
+                                               weeks: int = 12,
+                                               start: str = None, end: str = None) -> list:
+    name = (instance_name or '').strip()
+    if not name:
+        return []
+    _ensure_emby_schema()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if start and end:
+                start_s = traffic_db._normalize_range_start(start)
+                end_s = traffic_db._normalize_range_end_exclusive(end, hourly=False)
+                params = (name, start_s, end_s)
+                where_time = 'stopped_at >= ? AND stopped_at < ?'
+            else:
+                cutoff = _cutoff_str(days=weeks * 7)
+                params = (name, cutoff)
+                where_time = 'stopped_at >= ?'
+            c.execute(f'''
+                SELECT strftime('%G-W%V', stopped_at) AS week,
+                       SUM(estimated_upload_bytes) AS total_bytes
+                FROM emby_playback_upload_facts
+                WHERE instance_name = ?
+                AND {where_time}
+                GROUP BY strftime('%G-W%V', stopped_at)
+                ORDER BY week ASC
+            ''', params)
+            return [{'week': r['week'], 'total_bytes': int(r['total_bytes'] or 0),
+                     'backfilled_bytes': 0} for r in c.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_playback_upload_yearly_stats_all_users(instance_name: str,
+                                               years: int = 5,
+                                               start: str = None, end: str = None,
+                                               start_year: int = None,
+                                               end_year: int = None) -> list:
+    name = (instance_name or '').strip()
+    if not name:
+        return []
+    _ensure_emby_schema()
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            if start_year is not None and end_year is not None:
+                c.execute('''
+                    SELECT strftime('%Y', stopped_at) AS year,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ?
+                      AND CAST(strftime('%Y', stopped_at) AS INTEGER) >= ?
+                      AND CAST(strftime('%Y', stopped_at) AS INTEGER) <= ?
+                    GROUP BY strftime('%Y', stopped_at)
+                    ORDER BY year ASC
+                ''', (name, int(start_year), int(end_year)))
+            elif start and end:
+                start_s = traffic_db._normalize_range_start(start)
+                end_s = traffic_db._normalize_range_end_exclusive(end, hourly=False)
+                c.execute('''
+                    SELECT strftime('%Y', stopped_at) AS year,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ?
+                      AND stopped_at >= ? AND stopped_at < ?
+                    GROUP BY strftime('%Y', stopped_at)
+                    ORDER BY year ASC
+                ''', (name, start_s, end_s))
+            else:
+                cutoff = _cutoff_str(days=years * 366)
+                c.execute('''
+                    SELECT strftime('%Y', stopped_at) AS year,
+                           SUM(estimated_upload_bytes) AS total_bytes
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ? AND stopped_at >= ?
+                    GROUP BY strftime('%Y', stopped_at)
+                    ORDER BY year ASC
+                ''', (name, cutoff))
+            return [{'year': r['year'], 'total_bytes': int(r['total_bytes'] or 0),
+                     'backfilled_bytes': 0} for r in c.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_playback_upload_cycle_stats_all_users(instance_name: str,
+                                              periods: list) -> list:
+    name = (instance_name or '').strip()
+    if not name or not periods:
+        return []
+    _ensure_emby_schema()
+    result = []
+    with _lock:
+        conn = traffic_db.get_conn()
+        try:
+            c = conn.cursor()
+            for p in periods:
+                start_dt = p.get('cycle_start')
+                end_dt = p.get('cycle_end')
+                if hasattr(start_dt, 'strftime'):
+                    start_s = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    start_s = str(start_dt)[:19]
+                if hasattr(end_dt, 'strftime'):
+                    end_s = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    end_s = str(end_dt)[:19]
+                c.execute('''
+                    SELECT COALESCE(SUM(estimated_upload_bytes), 0) AS total
+                    FROM emby_playback_upload_facts
+                    WHERE instance_name = ?
+                      AND stopped_at >= ? AND stopped_at < ?
+                ''', (name, start_s, end_s))
                 row = c.fetchone()
                 cycle_start = p.get('cycle_start')
                 if hasattr(cycle_start, 'strftime'):

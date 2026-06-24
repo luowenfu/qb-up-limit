@@ -242,8 +242,9 @@
                                 </label>
                                 <label class="chart-control platform-panel platform-panel--emby" data-platform-panel="emby" hidden aria-hidden="true">
                                     <span class="chart-control-label">外网用户</span>
-                                    <select id="chartPlaybackUser" onchange="syncChartPlaybackUserPeriodOptions(); syncChartInstanceTitle(document.getElementById('chartInstance')?.value || ''); updateChart();">
-                                        <option value="">全部用户</option>
+                                    <select id="chartPlaybackUser" onchange="onChartPlaybackUserChange()">
+                                        <option value="__device__">整个设备</option>
+                                        <option value="__all_users__">全部用户</option>
                                     </select>
                                 </label>
                                 <label class="chart-control">
@@ -471,8 +472,9 @@
                     <div class="log-filter-body">
                         <div class="chart-filter-row chart-filter-row--selects log-filter-row--selects">
                             <label class="chart-control chart-control--device-type">
-                                <span class="chart-control-label">设备类型</span>
-                                <select id="syslogDeviceType" data-device-type-filter disabled onchange="onDeviceTypeFilterChange(this)">
+                                <span class="chart-control-label">日志类型</span>
+                                <select id="syslogDeviceType" onchange="onSyslogTypeChange()">
+                                    <option value="system" selected>系统日志</option>
                                     <option value="qb">qB 设备</option>
                                     <option value="emby">Emby 设备</option>
                                 </select>
@@ -501,7 +503,10 @@
                         </div>
                     </div>
                 </div>
-                <div class="platform-panel platform-panel--qb" data-platform-panel="qb">
+                <div class="platform-panel platform-panel--system" data-platform-panel="system">
+                    <div class="syslogs-list" id="appSyslogsList"></div>
+                </div>
+                <div class="platform-panel platform-panel--qb" data-platform-panel="qb" hidden aria-hidden="true">
                     <div class="syslogs-list" id="syslogsList"></div>
                 </div>
                 <div class="platform-panel platform-panel--emby" data-platform-panel="emby" hidden aria-hidden="true">

@@ -50,22 +50,52 @@ def _entry_matches_instance(entry: dict, instance: str) -> bool:
     return False
 
 
+def _is_emby_device_log(entry: dict) -> bool:
+    msg = entry.get('message') or ''
+    logger_name = (entry.get('logger') or '').lower()
+    if '[Emby:' in msg or '[Playback:' in msg:
+        return True
+    if 'emby' in logger_name:
+        return True
+    if msg.startswith('Emby '):
+        return True
+    for marker in ('Emby 设备', 'Emby 实例', '初始化 Emby', 'Emby 流量', 'Emby 容器'):
+        if marker in msg:
+            return True
+    return False
+
+
+_QB_DEVICE_TAG_RE = re.compile(r'^\[[^:\]]+\]')
+
+
+def _is_qb_device_log(entry: dict) -> bool:
+    if _is_emby_device_log(entry):
+        return False
+    msg = entry.get('message') or ''
+    logger_name = (entry.get('logger') or '').lower()
+    if _QB_DEVICE_TAG_RE.match(msg):
+        return True
+    if '初始化qB实例' in msg or '初始化 qB' in msg:
+        return True
+    if logger_name in ('scheduler', 'qb_monitor', 'speed_limiter') and '[' in msg:
+        return True
+    for marker in ('设备已添加', '设备配置已更新', '设备已删除'):
+        if marker in msg and 'Emby' not in msg:
+            return True
+    return False
+
+
 def _entry_matches_service(entry: dict, service: str) -> bool:
     if not service:
         return True
-    msg = entry.get('message') or ''
-    logger_name = (entry.get('logger') or '').lower()
-    is_emby = (
-        '[Emby:' in msg
-        or '[Playback:' in msg
-        or 'emby' in logger_name
-        or msg.startswith('Emby ')
-        or '初始化 Emby' in msg
-    )
+    is_emby = _is_emby_device_log(entry)
+    is_qb = _is_qb_device_log(entry)
     if service == 'emby':
         return is_emby
     if service == 'qb':
-        return not is_emby
+        return is_qb
+    if service == 'system':
+        return not is_emby and not is_qb
     return True
 
 

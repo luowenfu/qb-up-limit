@@ -79,7 +79,16 @@ function getChartInstanceStorageKey(platform = getChartPlatform()) {
 }
 const CHART_ALL_DEVICES_VALUE = '__all__';
 const CHART_ALL_DEVICES_LABEL = '全部设备';
+const CHART_PLAYBACK_DEVICE_VALUE = '__device__';
+const CHART_PLAYBACK_ALL_USERS_VALUE = '__all_users__';
+const CHART_PLAYBACK_DEVICE_LABEL = '整个设备';
+const CHART_PLAYBACK_ALL_USERS_LABEL = '全部用户';
 const CHART_CONTROLS_STORAGE_KEY = 'qb-up-limit-chart-controls';
+const EVENT_QB_INSTANCE_KEY = 'qb-up-limit-event-instance-qb';
+const EVENT_EMBY_INSTANCE_KEY = 'qb-up-limit-event-instance-emby';
+const SYSLOG_QB_INSTANCE_KEY = 'qb-up-limit-syslog-instance-qb';
+const SYSLOG_EMBY_INSTANCE_KEY = 'qb-up-limit-syslog-instance-emby';
+const EMBY_EVENT_PLAYBACK_USER_KEY = 'qb-up-limit-emby-event-playback-user';
 const VALID_TABS = new Set(['devices', 'stats', 'events', 'syslogs']);
 let cachedInstances = [];
 let lastCardsStructureKey = '';
@@ -213,6 +222,49 @@ function applyDefaultChartQuickRangeForPeriod(period, viewType = chartViewType) 
     const defaultPreset = pickDefaultQuickPreset(period, presets);
     if (!defaultPreset) return false;
     return applyChartQuickRangeDates(defaultPreset, period);
+}
+
+function findChartQuickPresetByLabel(label, period = document.getElementById('chartPeriod')?.value || 'hourly') {
+    const presets = getActiveQuickRanges(chartViewType, period);
+    if (!presets?.length || !label) return null;
+    return presets.find((preset) => preset.label === label) || null;
+}
+
+/** 非自定义时间范围时，按当前时刻重新计算已选快捷按钮对应的起止时间。 */
+function reapplyActiveChartQuickPreset(options = {}) {
+    if (document.getElementById('chartUseCustomRange')?.checked) return false;
+    const period = document.getElementById('chartPeriod')?.value || 'hourly';
+    if (!CHART_QUICK_RANGE_PERIODS.has(period)) return false;
+
+    const presets = getActiveQuickRanges(chartViewType, period);
+    if (!presets?.length) return false;
+
+    let preset = chartActivePresetLabel
+        ? findChartQuickPresetByLabel(chartActivePresetLabel, period)
+        : null;
+    if (!preset) {
+        if (isChartQuickRangeActive()) return false;
+        preset = pickDefaultQuickPreset(period, presets);
+        if (!preset) return false;
+        chartActivePresetLabel = preset.label;
+    }
+
+    if (!applyChartQuickRangeDates(preset, period)) return false;
+    if (!options.skipButtons) syncChartRangeQuickButtons();
+    if (!options.skipPersist) persistChartControls();
+    return true;
+}
+
+function ensureChartQueryRangeReady() {
+    if (document.getElementById('chartUseCustomRange')?.checked) return;
+    const period = document.getElementById('chartPeriod')?.value || 'hourly';
+    if (!CHART_QUICK_RANGE_PERIODS.has(period)) return;
+    if (chartActivePresetLabel || !isChartQuickRangeActive()) {
+        reapplyActiveChartQuickPreset({
+            skipPersist: true,
+            skipButtons: true,
+        });
+    }
 }
 
 const CHART_QUICK_RANGE_PERIODS = new Set(['hourly', 'daily', 'monthly']);
@@ -587,15 +639,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof updateEmbyHeaderStats === 'function') updateEmbyHeaderStats([]);
     ensureHourSelectOptions(document.getElementById('chartRangeStartHour'));
     ensureHourSelectOptions(document.getElementById('chartRangeEndHour'));
-    restoreChartControls();
-    syncChartPlatformUi();
-    syncChartTypeToggle();
-    syncChartLegendBackfillHint();
-    syncChartRangeInputs();
     setupChartRangeStartFocus();
     setupChartLegendPanel();
     setupChartFullscreen();
     window.addEventListener('pagehide', () => persistChartControls());
+    window.addEventListener('beforeunload', () => persistChartControls());
     setupSpeedLimitToggleDelegation();
     setupStatusBadgePopoverClamp();
     ensureDeviceAddressToggle();
@@ -603,6 +651,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof fetchEmbyFeatureConfig === 'function') {
         await fetchEmbyFeatureConfig();
     }
+    await bootstrapPersistedTabControls();
     if (typeof initEmby === 'function') initEmby();
     await initAutoRefresh();
     const savedTab = boot?.tab || sessionStorage.getItem(TAB_STORAGE_KEY);
@@ -653,7 +702,11 @@ function switchTab(tab) {
     } else if (tab === 'events') {
         loadEvents();
     } else if (tab === 'syslogs') {
-        loadSystemLogs();
+        if (typeof loadSyslogsForCurrentType === 'function') {
+            loadSyslogsForCurrentType();
+        } else {
+            loadSystemLogs();
+        }
     }
 }
 
@@ -788,15 +841,20 @@ async function refreshAll(forceRender = false, silent = false) {
         if (currentTab === 'events' && typeof loadEmbyEvents === 'function') {
             await loadEmbyEvents(silent);
         }
-        if (currentTab === 'syslogs') {
-            await loadEmbySystemLogs(silent);
+        if (currentTab === 'syslogs' && typeof loadSyslogsForCurrentType === 'function') {
+            await loadSyslogsForCurrentType(silent);
         }
     } else {
         if (currentTab === 'events') await loadEvents(silent);
-        if (currentTab === 'syslogs') await loadSystemLogs(silent);
+        if (currentTab === 'syslogs' && typeof loadSyslogsForCurrentType === 'function') {
+            await loadSyslogsForCurrentType(silent);
+        }
     }
     if (currentTab === 'stats' && document.getElementById('chartInstance')?.value
         && typeof updateChart === 'function') {
+        if (getChartPlatform() === 'emby' && typeof ensureChartPlaybackUserReady === 'function') {
+            await ensureChartPlaybackUserReady();
+        }
         await updateChart(silent);
     }
     if (currentTab === 'devices' && typeof renderDevicesPanel === 'function') {
@@ -1401,17 +1459,29 @@ function aggregateChartStatsRows(rowsList, period) {
 }
 
 async function fetchChartDirectionData(instanceName, platform, period, params, direction, playbackUser) {
-    if (platform === 'emby' && playbackUser) {
-        const res = await axios.get(
-            `/api/emby/playback-stats/${encodeURIComponent(instanceName)}/${period}`,
-            { params: { ...params, user: playbackUser } },
-        );
+    if (platform === 'emby') {
+        if (isChartPlaybackAllUsersValue(playbackUser)) {
+            const res = await axios.get(
+                `/api/emby/playback-stats/${encodeURIComponent(instanceName)}/${period}`,
+                { params: { ...params, user: CHART_PLAYBACK_ALL_USERS_VALUE } },
+            );
+            if (!res.data.success) return null;
+            return normalizePlaybackStatsPayload(res.data.data, period, playbackUser);
+        }
+        if (isChartPlaybackUserQuery(playbackUser)) {
+            const res = await axios.get(
+                `/api/emby/playback-stats/${encodeURIComponent(instanceName)}/${period}`,
+                { params: { ...params, user: playbackUser } },
+            );
+            if (!res.data.success) return null;
+            return normalizePlaybackStatsPayload(res.data.data, period, playbackUser);
+        }
+        const base = `/api/emby/stats/${encodeURIComponent(instanceName)}/${period}`;
+        const res = await axios.get(base, { params: { ...params, direction } });
         if (!res.data.success) return null;
-        return normalizePlaybackStatsPayload(res.data.data, period, playbackUser);
+        return res.data.data;
     }
-    const base = platform === 'emby'
-        ? `/api/emby/stats/${encodeURIComponent(instanceName)}/${period}`
-        : `/api/stats/${encodeURIComponent(instanceName)}/${period}`;
+    const base = `/api/stats/${encodeURIComponent(instanceName)}/${period}`;
     const res = await axios.get(base, { params: { ...params, direction } });
     if (!res.data.success) return null;
     return res.data.data;
@@ -1439,16 +1509,94 @@ function buildChartInstanceTitleHTML(instanceName, service = 'qb', playbackLabel
     }
     let titleText = escapeHtml(name);
     if (service === 'emby') {
-        const suffix = String(playbackLabel ?? '').trim() || '全部用户';
+        const suffix = String(playbackLabel ?? '').trim() || CHART_PLAYBACK_DEVICE_LABEL;
         titleText += ` - ${escapeHtml(suffix)}`;
     }
     return `${buildInstanceServiceIconHTML(service)}<span class="chart-instance-title-text">${titleText}</span>`;
 }
 
+function isChartPlaybackDeviceValue(value) {
+    const v = String(value ?? '').trim();
+    return !v || v === CHART_PLAYBACK_DEVICE_VALUE;
+}
+
+function isChartPlaybackAllUsersValue(value) {
+    return String(value ?? '').trim() === CHART_PLAYBACK_ALL_USERS_VALUE;
+}
+
+function isChartPlaybackUserQuery(value) {
+    const v = String(value ?? '').trim();
+    return !!v && !isChartPlaybackDeviceValue(v) && !isChartPlaybackAllUsersValue(v);
+}
+
+function migrateChartPlaybackUserValue(value) {
+    const v = String(value ?? '').trim();
+    if (!v) return CHART_PLAYBACK_DEVICE_VALUE;
+    return v;
+}
+
+function getPersistedChartPlaybackUser() {
+    try {
+        const raw = sessionStorage.getItem(CHART_CONTROLS_STORAGE_KEY);
+        if (!raw) return null;
+        const state = JSON.parse(raw);
+        if ('playbackUser' in state) {
+            return migrateChartPlaybackUserValue(state.playbackUser);
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+function resolveChartPlaybackUserPrev(select) {
+    if (chartRestoredPlaybackUser != null) {
+        return migrateChartPlaybackUserValue(chartRestoredPlaybackUser);
+    }
+    const persisted = getPersistedChartPlaybackUser();
+    if (persisted != null) return persisted;
+    return migrateChartPlaybackUserValue(select?.value);
+}
+
+function getChartPlaybackUserDisplayLabel(value) {
+    if (isChartPlaybackDeviceValue(value)) return CHART_PLAYBACK_DEVICE_LABEL;
+    if (isChartPlaybackAllUsersValue(value)) return CHART_PLAYBACK_ALL_USERS_LABEL;
+    return String(value ?? '').trim() || CHART_PLAYBACK_DEVICE_LABEL;
+}
+
+function buildChartPlaybackUserSelectOptions() {
+    const select = document.getElementById('chartPlaybackUser');
+    if (!select) return;
+    select.innerHTML = '';
+    const deviceOpt = document.createElement('option');
+    deviceOpt.value = CHART_PLAYBACK_DEVICE_VALUE;
+    deviceOpt.textContent = CHART_PLAYBACK_DEVICE_LABEL;
+    select.appendChild(deviceOpt);
+    const allUsersOpt = document.createElement('option');
+    allUsersOpt.value = CHART_PLAYBACK_ALL_USERS_VALUE;
+    allUsersOpt.textContent = CHART_PLAYBACK_ALL_USERS_LABEL;
+    select.appendChild(allUsersOpt);
+}
+
 function getChartPlaybackUserTitleSuffix() {
     if (getChartPlatform() !== 'emby') return null;
-    const userName = (document.getElementById('chartPlaybackUser')?.value || '').trim();
-    return userName || '全部用户';
+    if (_chartPlaybackUsersReady) {
+        return getChartPlaybackUserDisplayLabel(getChartPlaybackUserSelection());
+    }
+    if (chartRestoredPlaybackUser != null) {
+        return getChartPlaybackUserDisplayLabel(chartRestoredPlaybackUser);
+    }
+    const persisted = getPersistedChartPlaybackUser();
+    if (persisted != null) {
+        return getChartPlaybackUserDisplayLabel(persisted);
+    }
+    return getChartPlaybackUserDisplayLabel(getChartPlaybackUserSelection());
+}
+
+function onChartPlaybackUserChange() {
+    chartRestoredPlaybackUser = getChartPlaybackUserSelection();
+    syncChartPlaybackUserPeriodOptions();
+    syncChartInstanceTitle(document.getElementById('chartInstance')?.value || '');
+    persistChartControls();
+    updateChart();
 }
 
 function buildNextPlanPopoverContent(inst) {
@@ -2349,7 +2497,8 @@ function maskDeviceHostDisplay(host) {
 
     const parts = h.split('.');
     if (parts.length === 4 && parts.every(p => /^\d{1,3}$/.test(p))) {
-        return `${parts[0]}.${'*'.repeat(parts[1].length)}.${parts[2]}.${parts[3]}`;
+        const stars = (segment) => '*'.repeat(segment.length);
+        return `${parts[0]}.${stars(parts[1])}.${stars(parts[2])}.${parts[3]}`;
     }
 
     if (parts.length >= 2 && h.includes('.')) {
@@ -3078,6 +3227,36 @@ function populateChartInstanceSelect(instances, platform = getChartPlatform()) {
     }
 }
 
+let _chartPlaybackUsersSeq = 0;
+let _chartPlaybackUsersReady = false;
+
+function getChartPlaybackUserSelection() {
+    const select = document.getElementById('chartPlaybackUser');
+    return (select?.value || '').trim();
+}
+
+/** 查询用外网用户：列表就绪后仅以选框为准；__device__=Docker 总上行，__all_users__=各用户合计 */
+function getChartPlaybackUserForQuery() {
+    if (_chartPlaybackUsersReady) {
+        return getChartPlaybackUserSelection();
+    }
+    if (chartRestoredPlaybackUser != null) {
+        return migrateChartPlaybackUserValue(chartRestoredPlaybackUser);
+    }
+    const persisted = getPersistedChartPlaybackUser();
+    if (persisted != null) return persisted;
+    return migrateChartPlaybackUserValue(getChartPlaybackUserSelection());
+}
+
+async function ensureChartPlaybackUserReady() {
+    if (getChartPlatform() !== 'emby') return;
+    const instance = document.getElementById('chartInstance')?.value || '';
+    if (!instance || isChartAllDevicesValue(instance)) return;
+    if (typeof refreshChartPlaybackUsers === 'function') {
+        await refreshChartPlaybackUsers();
+    }
+}
+
 function syncChartInstanceSelectForPlatform() {
     const platform = getChartPlatform();
     const instances = platform === 'emby'
@@ -3089,51 +3268,66 @@ function syncChartInstanceSelectForPlatform() {
     }
 }
 
-let _chartPlaybackUsersSeq = 0;
-
 async function refreshChartPlaybackUsers() {
     const select = document.getElementById('chartPlaybackUser');
     if (!select) return;
+    _chartPlaybackUsersReady = false;
     const platform = getChartPlatform();
-    const restoredUser = chartRestoredPlaybackUser;
-    const prev = restoredUser != null ? restoredUser : select.value;
+    const prev = resolveChartPlaybackUserPrev(select);
     const requestId = ++_chartPlaybackUsersSeq;
-    select.innerHTML = '<option value="">全部用户</option>';
-    if (platform !== 'emby') {
+    buildChartPlaybackUserSelectOptions();
+
+    const applyPrevSelection = () => {
+        if ([...select.options].some((o) => o.value === prev)) {
+            select.value = prev;
+            chartRestoredPlaybackUser = prev;
+        }
+    };
+
+    const finishPlaybackUsersRefresh = () => {
+        if (requestId !== _chartPlaybackUsersSeq) return;
+        const instance = document.getElementById('chartInstance')?.value || '';
+        if (platform === 'emby' && instance && !isChartAllDevicesValue(instance)) {
+            applyPrevSelection();
+        }
+        _chartPlaybackUsersReady = true;
         syncChartPlaybackUserPeriodOptions();
-        if (restoredUser != null) chartRestoredPlaybackUser = null;
+    };
+
+    if (platform !== 'emby') {
+        finishPlaybackUsersRefresh();
         return;
     }
     const instance = document.getElementById('chartInstance')?.value || '';
     if (!instance || isChartAllDevicesValue(instance)) {
-        syncChartPlaybackUserPeriodOptions();
-        if (restoredUser != null) chartRestoredPlaybackUser = null;
+        finishPlaybackUsersRefresh();
         return;
     }
     try {
         const res = await axios.get('/api/emby/playback-users', { params: { instance } });
         if (requestId !== _chartPlaybackUsersSeq) return;
-        if (!res.data.success) return;
-        const seen = new Set();
-        (res.data.data || []).forEach((userName) => {
-            const name = String(userName || '').trim();
-            if (!name || seen.has(name)) return;
-            seen.add(name);
-            const opt = document.createElement('option');
-            opt.value = name;
-            opt.textContent = name;
-            select.appendChild(opt);
-        });
-        if (prev && [...select.options].some((o) => o.value === prev)) {
-            select.value = prev;
+        if (res.data.success) {
+            const seen = new Set();
+            (res.data.data || []).forEach((userName) => {
+                const name = String(userName || '').trim();
+                if (!name || seen.has(name)) return;
+                seen.add(name);
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            });
+            if (prev && isChartPlaybackUserQuery(prev) && !seen.has(prev)) {
+                const opt = document.createElement('option');
+                opt.value = prev;
+                opt.textContent = prev;
+                select.appendChild(opt);
+            }
         }
-        if (restoredUser != null) chartRestoredPlaybackUser = null;
     } catch (e) {
         /* 用户列表加载失败时仍可用设备总上行 */
     } finally {
-        if (requestId === _chartPlaybackUsersSeq) {
-            syncChartPlaybackUserPeriodOptions();
-        }
+        finishPlaybackUsersRefresh();
     }
 }
 
@@ -3165,12 +3359,12 @@ async function onChartInstanceChange() {
     await updateChart();
 }
 
-function syncChartPlatformUi() {
+async function syncChartPlatformUi() {
     const platform = getChartPlatform();
     if (typeof syncPlatformPanelUi === 'function') {
         syncPlatformPanelUi('stats');
     }
-    syncChartInstanceSelectForPlatform();
+    await syncChartInstanceSelectForPlatform();
 
     const cycleOpt = document.querySelector('#chartPeriod option[value="cycle"]');
     if (platform === 'emby') {
@@ -3187,8 +3381,12 @@ function updateInstanceSelects(instances) {
     const chartSel = document.getElementById('chartInstance');
     const eventSel = document.getElementById('eventInstance');
     const syslogSel = document.getElementById('syslogInstance');
-    const savedEvent = eventSel?.value || '';
-    const savedSyslog = syslogSel?.value || '';
+    const savedEvent = eventSel?.value
+        || sessionStorage.getItem(EVENT_QB_INSTANCE_KEY)
+        || '';
+    const savedSyslog = syslogSel?.value
+        || sessionStorage.getItem(SYSLOG_QB_INSTANCE_KEY)
+        || '';
 
     if (getChartPlatform() === 'qb') {
         populateChartInstanceSelect(instances, 'qb');
@@ -3209,6 +3407,9 @@ function updateInstanceSelects(instances) {
             if (savedEvent !== next) eventChanged = true;
             eventSel.value = next;
         }
+        if (eventSel.value) {
+            sessionStorage.setItem(EVENT_QB_INSTANCE_KEY, eventSel.value);
+        }
         if (eventChanged && currentTab === 'events') {
             loadEvents(true);
         }
@@ -3227,8 +3428,11 @@ function updateInstanceSelects(instances) {
             if (savedSyslog !== '') syslogChanged = true;
             syslogSel.value = '';
         }
-        if (syslogChanged && currentTab === 'syslogs') {
-            loadSystemLogs(true);
+        if (syslogChanged && currentTab === 'syslogs' && typeof loadSyslogsForCurrentType === 'function') {
+            loadSyslogsForCurrentType(true);
+        }
+        if (syslogSel.value != null) {
+            sessionStorage.setItem(SYSLOG_QB_INSTANCE_KEY, syslogSel.value);
         }
     }
 
@@ -4041,6 +4245,20 @@ function applyChartRangeState(period, state) {
     }
 }
 
+async function bootstrapPersistedTabControls() {
+    restoreChartControls();
+    if (typeof syncDeviceTypeFilterControls === 'function') {
+        syncDeviceTypeFilterControls();
+    }
+    if (getChartPlatform() === 'emby' && typeof ensureEmbyDataLoaded === 'function') {
+        await ensureEmbyDataLoaded();
+    }
+    await syncChartPlatformUi();
+    syncChartTypeToggle();
+    syncChartLegendBackfillHint();
+    syncChartRangeInputs();
+}
+
 function persistChartControls() {
     const periodEl = document.getElementById('chartPeriod');
     const customEl = document.getElementById('chartUseCustomRange');
@@ -4055,7 +4273,18 @@ function persistChartControls() {
     };
     if (chartActivePresetLabel) state.activePresetLabel = chartActivePresetLabel;
     const playbackEl = document.getElementById('chartPlaybackUser');
-    if (playbackEl) state.playbackUser = playbackEl.value || '';
+    if (playbackEl) {
+        if (_chartPlaybackUsersReady) {
+            state.playbackUser = getChartPlaybackUserSelection();
+        } else {
+            const fromRestore = chartRestoredPlaybackUser != null
+                ? migrateChartPlaybackUserValue(chartRestoredPlaybackUser)
+                : null;
+            const fromPersisted = getPersistedChartPlaybackUser();
+            state.playbackUser = fromRestore ?? fromPersisted
+                ?? migrateChartPlaybackUserValue(getChartPlaybackUserSelection());
+        }
+    }
     const instanceEl = document.getElementById('chartInstance');
     const chartPlatform = getChartPlatform();
     state.chartPlatform = chartPlatform;
@@ -4064,6 +4293,36 @@ function persistChartControls() {
         sessionStorage.setItem(getChartInstanceStorageKey(chartPlatform), instanceEl.value);
     } else {
         state.chartInstance = '';
+    }
+
+    const eventQbEl = document.getElementById('eventInstance');
+    const eventEmbyEl = document.getElementById('embyEventInstance');
+    const embyEventLogTypeEl = document.getElementById('embyEventLogType');
+    const embyEventPlaybackUserEl = document.getElementById('embyEventPlaybackUser');
+    const syslogQbEl = document.getElementById('syslogInstance');
+    const syslogEmbyEl = document.getElementById('embySyslogInstance');
+    if (eventQbEl) {
+        state.eventInstanceQb = eventQbEl.value || '';
+        sessionStorage.setItem(EVENT_QB_INSTANCE_KEY, state.eventInstanceQb);
+    }
+    if (eventEmbyEl) {
+        state.eventInstanceEmby = eventEmbyEl.value || '';
+        sessionStorage.setItem(EVENT_EMBY_INSTANCE_KEY, state.eventInstanceEmby);
+    }
+    if (embyEventLogTypeEl) {
+        state.embyEventLogType = embyEventLogTypeEl.value || 'playback';
+    }
+    if (embyEventPlaybackUserEl) {
+        state.embyEventPlaybackUser = embyEventPlaybackUserEl.value || '';
+        sessionStorage.setItem(EMBY_EVENT_PLAYBACK_USER_KEY, state.embyEventPlaybackUser);
+    }
+    if (syslogQbEl) {
+        state.syslogInstanceQb = syslogQbEl.value || '';
+        sessionStorage.setItem(SYSLOG_QB_INSTANCE_KEY, state.syslogInstanceQb);
+    }
+    if (syslogEmbyEl) {
+        state.syslogInstanceEmby = syslogEmbyEl.value || '';
+        sessionStorage.setItem(SYSLOG_EMBY_INSTANCE_KEY, state.syslogInstanceEmby);
     }
 
     sessionStorage.setItem(CHART_CONTROLS_STORAGE_KEY, JSON.stringify(state));
@@ -4097,7 +4356,9 @@ function restoreChartControls() {
     const period = periodEl.value;
     applyChartRangeState(period, state);
     if (state.activePresetLabel) chartActivePresetLabel = state.activePresetLabel;
-    if (state.playbackUser != null) chartRestoredPlaybackUser = state.playbackUser;
+    if ('playbackUser' in state) {
+        chartRestoredPlaybackUser = migrateChartPlaybackUserValue(state.playbackUser);
+    }
     if (state.chartPlatform && typeof setDeviceTypeFilter === 'function') {
         setDeviceTypeFilter(state.chartPlatform);
     }
@@ -4111,6 +4372,25 @@ function restoreChartControls() {
             getChartInstanceStorageKey(state.chartPlatform),
             CHART_ALL_DEVICES_VALUE,
         );
+    }
+    if (state.eventInstanceQb != null) {
+        sessionStorage.setItem(EVENT_QB_INSTANCE_KEY, state.eventInstanceQb);
+    }
+    if (state.eventInstanceEmby != null) {
+        sessionStorage.setItem(EVENT_EMBY_INSTANCE_KEY, state.eventInstanceEmby);
+    }
+    if (state.embyEventLogType) {
+        const logTypeEl = document.getElementById('embyEventLogType');
+        if (logTypeEl) logTypeEl.value = state.embyEventLogType;
+    }
+    if (state.embyEventPlaybackUser != null) {
+        sessionStorage.setItem(EMBY_EVENT_PLAYBACK_USER_KEY, state.embyEventPlaybackUser);
+    }
+    if (state.syslogInstanceQb != null) {
+        sessionStorage.setItem(SYSLOG_QB_INSTANCE_KEY, state.syslogInstanceQb);
+    }
+    if (state.syslogInstanceEmby != null) {
+        sessionStorage.setItem(SYSLOG_EMBY_INSTANCE_KEY, state.syslogInstanceEmby);
     }
 }
 
@@ -4128,7 +4408,8 @@ function syncChartRangeInputs() {
     setChartRangeInputsEnabled(!!customEnabled, period);
 
     if (!customEnabled) {
-        if (!hasChartRangeInputValues(period)) {
+        if (!reapplyActiveChartQuickPreset({ skipPersist: true })
+            && !hasChartRangeInputValues(period)) {
             if (!applyDefaultChartQuickRangeForPeriod(period)) {
                 setDefaultChartRangeInputs(period);
             }
@@ -4567,6 +4848,8 @@ function onChartRangeToggle() {
     syncChartRangeSide();
     if (enabled) {
         syncChartRangeInputs();
+    } else if (chartActivePresetLabel) {
+        reapplyActiveChartQuickPreset({ skipPersist: true });
     } else if (!isChartQuickRangeActive()) {
         setDefaultChartRangeInputs(period);
     }
@@ -4581,6 +4864,9 @@ function onChartTypeChange(type) {
     syncChartTypeToggle();
     syncChartLegendBackfillHint();
     syncChartRangeQuickButtons();
+    if (!document.getElementById('chartUseCustomRange')?.checked) {
+        reapplyActiveChartQuickPreset({ skipPersist: true });
+    }
     if (lastChartPayload) {
         renderChart(
             lastChartPayload.uploadData,
@@ -4823,16 +5109,24 @@ function sumChartGbValues(values) {
     return (values || []).reduce((sum, v) => sum + (Number(v) || 0), 0);
 }
 
+function sumChartBytesFromRows(rows) {
+    return (rows || []).reduce((sum, row) => sum + (Number(row?.total_bytes) || 0), 0);
+}
+
 function syncChartLegendTotals() {
     const uploadOnly = isEmbyChartUploadOnly();
     if (lastChartLegendTotals) {
         const uploadValueEl = document.querySelector('#chartLegendTotalUpload .chart-legend-total-value');
         const downloadValueEl = document.querySelector('#chartLegendTotalDownload .chart-legend-total-value');
         if (uploadValueEl) {
-            uploadValueEl.textContent = formatChartLegendTotalFromGb(lastChartLegendTotals.upload);
+            uploadValueEl.textContent = formatChartLegendTotalFromBytes(
+                lastChartLegendTotals.uploadBytes ?? 0,
+            );
         }
         if (downloadValueEl && !uploadOnly) {
-            downloadValueEl.textContent = formatChartLegendTotalFromGb(lastChartLegendTotals.download);
+            downloadValueEl.textContent = formatChartLegendTotalFromBytes(
+                lastChartLegendTotals.downloadBytes ?? 0,
+            );
         }
     }
     document.querySelectorAll('#chartLegendPanel .chart-legend-total[data-chart-dataset]').forEach(el => {
@@ -5835,7 +6129,7 @@ function showChartNoDataInRange(instanceName) {
     syncChartLegendPanelLayout(true);
     if (xTitleEl) xTitleEl.textContent = '';
     syncChartInstanceTitle(instanceName);
-    lastChartLegendTotals = { upload: 0, download: 0 };
+    lastChartLegendTotals = { uploadBytes: 0, downloadBytes: 0 };
     syncChartLegendTotals();
     clearYAxisLabels();
     teardownChartScrollLayout();
@@ -5850,10 +6144,15 @@ function normalizePlaybackStatsPayload(rows, period, playbackUser) {
 
 async function updateChart(silent = false) {
     if (chartFullscreenActive) return;
-    persistChartControls();
+    ensureChartQueryRangeReady();
     const platform = getChartPlatform();
+    const instance = document.getElementById('chartInstance')?.value || '';
+    const isAllDevices = isChartAllDevicesValue(instance);
+    if (platform === 'emby' && instance && !isAllDevices) {
+        await ensureChartPlaybackUserReady();
+    }
+    persistChartControls();
     const storageKey = getChartInstanceStorageKey(platform);
-    const instance = document.getElementById('chartInstance').value;
     if (instance) {
         sessionStorage.setItem(storageKey, instance);
     } else {
@@ -5876,10 +6175,9 @@ async function updateChart(silent = false) {
 
     try {
         const params = getChartQueryParams();
-        const isAllDevices = isChartAllDevicesValue(instance);
         const playbackUser = platform === 'emby' && !isAllDevices
-            ? (document.getElementById('chartPlaybackUser')?.value || '')
-            : '';
+            ? getChartPlaybackUserForQuery()
+            : CHART_PLAYBACK_DEVICE_VALUE;
         const targetNames = isAllDevices
             ? getChartInstanceNamesForPlatform(platform)
             : [instance];
@@ -6407,6 +6705,12 @@ function renderPieChart(uploadData, downloadData, period, instanceName, animate 
     syncChartLegendPlatformUi();
     syncChartInstanceTitle(instanceName);
 
+    lastChartLegendTotals = {
+        uploadBytes: sumChartBytesFromRows(uploadData),
+        downloadBytes: sumChartBytesFromRows(downloadData),
+    };
+    syncChartLegendTotals();
+
     const charts = mountTrafficPieCharts({
         labels,
         rawLabels,
@@ -6451,8 +6755,8 @@ function renderChart(uploadData, downloadData, period, instanceName, animate = f
     }
 
     lastChartLegendTotals = {
-        upload: sumChartGbValues(uploadValues),
-        download: sumChartGbValues(downloadValues),
+        uploadBytes: sumChartBytesFromRows(uploadData),
+        downloadBytes: sumChartBytesFromRows(downloadData),
     };
     const backfillMeta = { backfillUploadValues, backfillDownloadValues };
     const chartType = chartViewType;
@@ -6517,6 +6821,7 @@ function renderChart(uploadData, downloadData, period, instanceName, animate = f
 }
 
 async function loadEvents(silent = false) {
+    if (typeof persistChartControls === 'function') persistChartControls();
     const container = document.getElementById('eventsList');
     const instance = document.getElementById('eventInstance')?.value || '';
     if (!instance) {
@@ -6571,12 +6876,18 @@ async function loadSystemLogs(silent = false) {
     await fetchServiceSystemLogs('qb', 'syslogInstance', 'syslogsList', silent);
 }
 
+async function loadAppSystemLogs(silent = false) {
+    await fetchServiceSystemLogs('system', null, 'appSyslogsList', silent);
+}
+
 async function loadEmbySystemLogs(silent = false) {
     await fetchServiceSystemLogs('emby', 'embySyslogInstance', 'embySyslogsList', silent);
 }
 
 async function fetchServiceSystemLogs(service, instanceSelectId, containerId, silent = false) {
-    const instance = document.getElementById(instanceSelectId)?.value || '';
+    const instance = instanceSelectId
+        ? (document.getElementById(instanceSelectId)?.value || '')
+        : '';
     const level = document.getElementById('syslogLevel')?.value || '';
     try {
         const params = new URLSearchParams({ limit: '1000', service });
@@ -6591,15 +6902,36 @@ async function fetchServiceSystemLogs(service, instanceSelectId, containerId, si
     }
 }
 
-function onSyslogLevelChange() {
-    const platform = document.getElementById('syslogDeviceType')?.value
-        || (typeof getDeviceTypeFilter === 'function' ? getDeviceTypeFilter() : 'qb')
-        || 'qb';
-    if (platform === 'emby') {
-        loadEmbySystemLogs();
-        return;
+async function loadSyslogsForCurrentType(silent = false) {
+    if (typeof persistChartControls === 'function') persistChartControls();
+    const syslogType = typeof getSyslogTypeFilter === 'function'
+        ? getSyslogTypeFilter()
+        : (document.getElementById('syslogDeviceType')?.value || 'system');
+    if (syslogType === 'emby') {
+        return loadEmbySystemLogs(silent);
     }
-    loadSystemLogs();
+    if (syslogType === 'qb') {
+        return loadSystemLogs(silent);
+    }
+    return loadAppSystemLogs(silent);
+}
+
+function onSyslogTypeChange() {
+    const select = document.getElementById('syslogDeviceType');
+    const next = typeof setSyslogTypeFilter === 'function'
+        ? setSyslogTypeFilter(select?.value || 'system')
+        : (select?.value || 'system');
+    if (select && select.value !== next) {
+        select.value = next;
+    }
+    if (typeof syncSyslogFilterUi === 'function') {
+        syncSyslogFilterUi();
+    }
+    loadSyslogsForCurrentType();
+}
+
+function onSyslogLevelChange() {
+    loadSyslogsForCurrentType();
 }
 
 function renderSystemLogs(logs, containerId = 'syslogsList') {

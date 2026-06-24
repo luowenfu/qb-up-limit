@@ -8,9 +8,9 @@ from typing import Dict, Optional
 from zoneinfo import ZoneInfo
 
 import config_manager
-import config_manager
 import emby_traffic_db
 import playback_record_store
+import traffic_db
 import emby_playback_traffic
 from emby_client import EmbyClient
 from emby_docker import DockerStatsClient
@@ -20,8 +20,10 @@ from scheduler import clamp_interval, ticks_per_full_collect
 logger = logging.getLogger(__name__)
 
 
-def _online_since_from_prev(prev: dict) -> str:
-    if prev.get('is_online'):
+def _online_since_from_prev(prev: dict, was_online: bool = None) -> str:
+    if was_online is None:
+        was_online = prev.get('is_online')
+    if was_online:
         cached = prev.get('online_since')
         if cached:
             return cached
@@ -258,6 +260,7 @@ class EmbyMonitor:
             self.timezone = ZoneInfo(tz_name)
         except Exception:
             self.timezone = ZoneInfo('Asia/Shanghai')
+        traffic_db.set_timezone(self.timezone)
 
     def _now(self) -> datetime:
         return datetime.now(self.timezone)
@@ -355,12 +358,25 @@ class EmbyMonitor:
                           sessions: list, full: bool):
         with self._live_cache_lock:
             prev = self._live_cache.get(name, {})
+            prev_api_online = prev.get('api_online', False)
+            offline_since = None
+            online_since = None
+            if api_online:
+                online_since = _online_since_from_prev(prev, prev_api_online)
+            else:
+                if prev_api_online:
+                    offline_since = emby_traffic_db._now().strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    offline_since = prev.get('offline_since')
+                    if not offline_since:
+                        offline_since = emby_traffic_db._now().strftime('%Y-%m-%d %H:%M:%S')
             entry = {
                 'name': name,
                 'is_online': is_online,
                 'api_online': api_online,
                 'docker_available': docker_available,
-                'online_since': _online_since_from_prev(prev) if is_online else None,
+                'online_since': online_since,
+                'offline_since': offline_since,
                 'recent_delta_bytes': delta_up,
                 'recent_delta_download_bytes': delta_dl,
                 'session_count': len(sessions),
@@ -402,6 +418,23 @@ class EmbyMonitor:
             device_up = emby_traffic_db.get_total_bytes(name, 'upload')
             device_dl = emby_traffic_db.get_total_bytes(name, 'download')
 
+            api_online = live.get('api_online', status.get('api_online', 0) == 1)
+            raw_data_start = emby_traffic_db.get_data_start_time(name)
+            data_start_time = (
+                traffic_db._format_datetime_seconds(raw_data_start)
+                if raw_data_start else None
+            )
+            offline_since = None
+            online_since = None
+            if api_online:
+                raw_online = live.get('online_since')
+                if raw_online:
+                    online_since = traffic_db._format_datetime_seconds(raw_online)
+            else:
+                raw_offline = live.get('offline_since') or status.get('last_update')
+                if raw_offline:
+                    offline_since = traffic_db._format_datetime_seconds(raw_offline)
+
             result.append({
                 **live,
                 'name': name,
@@ -413,7 +446,10 @@ class EmbyMonitor:
                 'display_priority': client.display_priority,
                 'wan_traffic_only': client.wan_traffic_only,
                 'is_online': live.get('is_online', status.get('is_online', 0) == 1),
-                'api_online': live.get('api_online', status.get('api_online', 0) == 1),
+                'api_online': api_online,
+                'offline_since': offline_since,
+                'online_since': online_since,
+                'data_start_time': data_start_time,
                 'docker_available': live.get(
                     'docker_available', status.get('docker_available', 0) == 1),
                 'docker_socket_available': self.docker.is_available(),

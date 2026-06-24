@@ -1084,40 +1084,73 @@ def api_emby_playback_stats(instance_name, period):
             return jsonify({'success': False, 'error': '缺少 user 参数'}), 400
         if not config_manager.get_emby_instance(instance_name, emby_monitor.config):
             return jsonify({'success': False, 'error': '设备不存在'}), 404
+        all_users = user_name == emby_traffic_db.PLAYBACK_ALL_USERS_TOKEN
         if period == 'hourly':
             hours = min(int(request.args.get('hours', 24)), 366)
-            data = emby_traffic_db.get_playback_upload_hourly_stats(
-                instance_name, user_name, hours,
-                start=request.args.get('start'), end=request.args.get('end'),
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_hourly_stats_all_users(
+                    instance_name, hours,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_hourly_stats(
+                    instance_name, user_name, hours,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
         elif period == 'daily':
             days = min(int(request.args.get('days', 31)), 366)
-            data = emby_traffic_db.get_playback_upload_daily_stats(
-                instance_name, user_name, days,
-                start=request.args.get('start'), end=request.args.get('end'),
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_daily_stats_all_users(
+                    instance_name, days,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_daily_stats(
+                    instance_name, user_name, days,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
         elif period == 'monthly':
             months = min(int(request.args.get('months', 12)), 60)
-            data = emby_traffic_db.get_playback_upload_monthly_stats(
-                instance_name, user_name, months,
-                start=request.args.get('start'), end=request.args.get('end'),
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_monthly_stats_all_users(
+                    instance_name, months,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_monthly_stats(
+                    instance_name, user_name, months,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
         elif period == 'weekly':
             weeks = min(int(request.args.get('weeks', 12)), 104)
-            data = emby_traffic_db.get_playback_upload_weekly_stats(
-                instance_name, user_name, weeks,
-                start=request.args.get('start'), end=request.args.get('end'),
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_weekly_stats_all_users(
+                    instance_name, weeks,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_weekly_stats(
+                    instance_name, user_name, weeks,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                )
         elif period == 'yearly':
             years = min(int(request.args.get('years', 5)), 20)
             start_year = request.args.get('start_year')
             end_year = request.args.get('end_year')
-            data = emby_traffic_db.get_playback_upload_yearly_stats(
-                instance_name, user_name, years,
-                start=request.args.get('start'), end=request.args.get('end'),
-                start_year=int(start_year) if start_year else None,
-                end_year=int(end_year) if end_year else None,
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_yearly_stats_all_users(
+                    instance_name, years,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                    start_year=int(start_year) if start_year else None,
+                    end_year=int(end_year) if end_year else None,
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_yearly_stats(
+                    instance_name, user_name, years,
+                    start=request.args.get('start'), end=request.args.get('end'),
+                    start_year=int(start_year) if start_year else None,
+                    end_year=int(end_year) if end_year else None,
+                )
         elif period == 'cycle':
             from config_manager import DEFAULT_CYCLE, get_global_config
             from cycle import iter_cycle_periods
@@ -1131,9 +1164,14 @@ def api_emby_playback_stats(instance_name, period):
                 tz = ZoneInfo('Asia/Shanghai')
             count = min(int(request.args.get('cycles', 12)), 50)
             periods = iter_cycle_periods(DEFAULT_CYCLE, tz, count=count)
-            data = emby_traffic_db.get_playback_upload_cycle_stats(
-                instance_name, user_name, periods,
-            )
+            if all_users:
+                data = emby_traffic_db.get_playback_upload_cycle_stats_all_users(
+                    instance_name, periods,
+                )
+            else:
+                data = emby_traffic_db.get_playback_upload_cycle_stats(
+                    instance_name, user_name, periods,
+                )
         else:
             return jsonify({'success': False, 'error': '播放用户统计暂不支持该周期'}), 400
         return jsonify({'success': True, 'data': data})

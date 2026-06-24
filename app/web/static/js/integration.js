@@ -1,6 +1,7 @@
 /** qB / Emby 整合：功能开关、设备视图、统一 Tab 路由 */
 
 const DEVICE_TYPE_FILTER_KEY = 'qb-up-limit-device-type-filter';
+const SYSLOG_TYPE_FILTER_KEY = 'qb-up-limit-syslog-type-filter';
 const DEVICE_VIEW_MODE_KEY = 'qb-up-limit-device-view-mode';
 const MOBILE_DEVICE_VIEW_KEY = 'qb-up-limit-mobile-device-view';
 const MERGE_QB_SELECTION_KEY = 'qb-up-limit-merge-qb-selection';
@@ -11,6 +12,7 @@ const LEGACY_PLATFORM_KEY = 'qb-up-limit-current-platform';
 
 const DEVICE_VIEW_MODES = new Set(['qb', 'emby', 'merge']);
 const DEVICE_TYPE_FILTERS = new Set(['qb', 'emby']);
+const SYSLOG_TYPE_FILTERS = new Set(['system', 'qb', 'emby']);
 
 let embyFeatureEnabled = false;
 let embyDefaultDeviceView = 'qb';
@@ -595,6 +597,48 @@ function syncViewportDeviceViewMode(isMobile = isMobileViewport()) {
     syncDevicesPanelModeClass();
 }
 
+function getSyslogTypeFilter() {
+    try {
+        const saved = sessionStorage.getItem(SYSLOG_TYPE_FILTER_KEY);
+        if (SYSLOG_TYPE_FILTERS.has(saved)) {
+            if (saved === 'emby' && !embyFeatureEnabled) return 'system';
+            return saved;
+        }
+    } catch (e) { /* ignore */ }
+    return 'system';
+}
+
+function setSyslogTypeFilter(type) {
+    let next = SYSLOG_TYPE_FILTERS.has(type) ? type : 'system';
+    if (next === 'emby' && !embyFeatureEnabled) {
+        next = 'system';
+    }
+    try {
+        sessionStorage.setItem(SYSLOG_TYPE_FILTER_KEY, next);
+    } catch (e) { /* ignore */ }
+    return next;
+}
+
+function syncSyslogFilterUi() {
+    const syslogType = getSyslogTypeFilter();
+    const select = document.getElementById('syslogDeviceType');
+    if (select) {
+        const embyOption = select.querySelector('option[value="emby"]');
+        if (embyOption) {
+            embyOption.hidden = !embyFeatureEnabled;
+            embyOption.disabled = !embyFeatureEnabled;
+        }
+        if (syslogType === 'emby' && !embyFeatureEnabled) {
+            setSyslogTypeFilter('system');
+        }
+        select.value = getSyslogTypeFilter();
+        select.disabled = false;
+    }
+    if (typeof syncPlatformPanelUi === 'function') {
+        syncPlatformPanelUi('syslogs');
+    }
+}
+
 function getDeviceTypeFilter() {
     if (!embyFeatureEnabled) return 'qb';
     try {
@@ -812,7 +856,14 @@ function applyEmbyFeatureUi() {
     document.documentElement.classList.toggle('emby-feature-enabled', embyFeatureEnabled);
     syncDeviceViewSwitchUi();
     syncDeviceTypeFilterControls();
+    if (typeof syncSyslogFilterUi === 'function') {
+        syncSyslogFilterUi();
+    }
     syncDevicesPanelModeClass();
+    if (typeof currentTab !== 'undefined' && currentTab === 'stats'
+        && typeof syncChartPlatformUi === 'function') {
+        syncChartPlatformUi();
+    }
     if (typeof currentTab !== 'undefined' && currentTab !== 'devices') {
         syncPlatformPanelUi(currentTab);
     }
@@ -996,7 +1047,9 @@ function syncPlatformPanelUi(tab) {
     if (!tab || tab === 'devices') return;
     const root = document.getElementById(`tab-${tab}`);
     if (!root) return;
-    const platform = getDeviceTypeFilter();
+    const platform = tab === 'syslogs'
+        ? getSyslogTypeFilter()
+        : getDeviceTypeFilter();
     root.querySelectorAll('[data-platform-panel]').forEach(el => {
         const panelType = el.dataset.platformPanel;
         let show;
@@ -1016,6 +1069,9 @@ function onDeviceTypeFilterChange(selectEl) {
     document.querySelectorAll('[data-device-type-filter]').forEach(sel => {
         syncDeviceTypeSelectValue(sel, next);
     });
+    if (typeof persistChartControls === 'function') {
+        persistChartControls();
+    }
     if (typeof chartFullscreenActive !== 'undefined' && chartFullscreenActive
         && typeof exitChartFullscreen === 'function') {
         exitChartFullscreen();
@@ -1186,14 +1242,9 @@ async function refreshEventsLog() {
 }
 
 async function refreshSystemLogs() {
-    const platform = document.getElementById('syslogDeviceType')?.value
-        || (typeof getDeviceTypeFilter === 'function' ? getDeviceTypeFilter() : 'qb')
-        || 'qb';
-    if (platform === 'emby') {
-        await loadEmbySystemLogs();
-        return;
+    if (typeof loadSyslogsForCurrentType === 'function') {
+        await loadSyslogsForCurrentType();
     }
-    await loadSystemLogs();
 }
 
 async function refreshTrafficChart() {
@@ -1218,32 +1269,53 @@ function loadUnifiedTabContent(tab, platform) {
         return;
     }
     if (tab === 'stats') {
-        if (typeof syncChartPlatformUi === 'function') syncChartPlatformUi();
-        const hasInstance = !!document.getElementById('chartInstance')?.value;
-        if (hasInstance && typeof updateChart === 'function') {
-            updateChart();
-        } else if (typeof showChartArea === 'function') {
-            showChartArea(false);
-            if (typeof destroyTrafficCharts === 'function') destroyTrafficCharts();
+        const loadStats = async () => {
+            if (typeof syncChartPlatformUi === 'function') await syncChartPlatformUi();
+            if (typeof ensureChartPlaybackUserReady === 'function') {
+                await ensureChartPlaybackUserReady();
+            }
+            const hasInstance = !!document.getElementById('chartInstance')?.value;
+            if (hasInstance && typeof updateChart === 'function') {
+                await updateChart();
+            } else if (typeof showChartArea === 'function') {
+                showChartArea(false);
+                if (typeof destroyTrafficCharts === 'function') destroyTrafficCharts();
+            }
+        };
+        if (platform === 'emby' && typeof ensureEmbyDataLoaded === 'function') {
+            ensureEmbyDataLoaded(true).then(() => loadStats());
+        } else {
+            loadStats();
         }
         return;
     }
     if (tab === 'syslogs') {
-        if (platform === 'emby') {
-            const load = () => loadEmbySystemLogs();
-            if (typeof ensureEmbyDataLoaded === 'function') {
-                ensureEmbyDataLoaded(true).then(load);
-            } else {
-                load();
-            }
-            return;
+        if (typeof syncSyslogFilterUi === 'function') {
+            syncSyslogFilterUi();
         }
-        loadSystemLogs();
+        const load = () => {
+            if (typeof loadSyslogsForCurrentType === 'function') {
+                loadSyslogsForCurrentType();
+            }
+        };
+        const syslogType = getSyslogTypeFilter();
+        if (syslogType === 'emby' && typeof ensureEmbyDataLoaded === 'function') {
+            ensureEmbyDataLoaded(true).then(load);
+        } else {
+            load();
+        }
         return;
     }
     if (platform === 'emby') {
-        if (tab === 'events' && typeof loadEmbyEvents === 'function') {
-            loadEmbyEvents();
+        const loadEventsTab = () => {
+            if (tab === 'events' && typeof loadEmbyEvents === 'function') {
+                loadEmbyEvents();
+            }
+        };
+        if (typeof ensureEmbyDataLoaded === 'function') {
+            ensureEmbyDataLoaded(true).then(loadEventsTab);
+        } else {
+            loadEventsTab();
         }
         return;
     }
