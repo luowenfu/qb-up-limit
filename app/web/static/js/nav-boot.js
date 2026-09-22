@@ -5,9 +5,14 @@
     const LEGACY_PLATFORM_KEY = 'qb-up-limit-current-platform';
     const VALID_TABS = { devices: 1, stats: 1, events: 1, syslogs: 1 };
 
+    function readHashTab() {
+        const raw = String(location.hash || '').replace(/^#\/?/, '').trim();
+        return VALID_TABS[raw] ? raw : '';
+    }
+
     function readBootUiState() {
         try {
-            let tab = sessionStorage.getItem(TAB_KEY) || 'devices';
+            let tab = readHashTab() || sessionStorage.getItem(TAB_KEY) || 'devices';
             if (!VALID_TABS[tab]) tab = 'devices';
             const legacyPlatform = sessionStorage.getItem(LEGACY_PLATFORM_KEY);
             if (legacyPlatform === 'emby') {

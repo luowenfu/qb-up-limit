@@ -65,7 +65,7 @@
                 const data = await res.json();
                 if (data.success) {
                     sessionStorage.setItem('qb-up-limit-current-tab', 'devices');
-                    window.location.href = '/';
+                    window.location.replace('/');
                 } else {
                     errEl.textContent = data.error || '登录失败';
                     errEl.style.display = 'block';

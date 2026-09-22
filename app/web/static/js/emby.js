@@ -963,7 +963,7 @@ function buildEmbyTrafficDataHint(inst) {
     if (mode !== 'lucky') {
         return '未开启流量采集';
     }
-    return '按外网用户统计，不统计局域网流量';
+    return '按用户统计，不统计局域网流量';
 }
 
 function parseEmbyEndpointIp(remoteEndpoint) {

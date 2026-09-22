@@ -154,7 +154,7 @@ axios.interceptors.response.use(
     err => {
         if (err.response?.status === 401 && err.response?.data?.auth_required) {
             const next = encodeURIComponent(window.location.pathname + window.location.search);
-            window.location.href = `/login?next=${next}`;
+            window.location.replace(`/login?next=${next}`);
         }
         return Promise.reject(err);
     }
@@ -679,11 +679,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     try {
         const authRes = await axios.get('/api/auth/check');
         if (!authRes.data.authenticated) {
-            window.location.href = '/login';
+            window.location.replace('/login');
             return;
         }
     } catch (e) {
-        window.location.href = '/login';
+        window.location.replace('/login');
         return;
     }
     const topbarVersionEl = document.getElementById('topbarVersion');
@@ -710,19 +710,25 @@ document.addEventListener('DOMContentLoaded', async function() {
     await bootstrapPersistedTabControls();
     if (typeof initEmby === 'function') initEmby();
     await initAutoRefresh();
-    const savedTab = boot?.tab || sessionStorage.getItem(TAB_STORAGE_KEY);
+    const savedTab = boot?.tab
+        || (typeof HistoryNav !== 'undefined' && HistoryNav.readHashTab && HistoryNav.readHashTab())
+        || sessionStorage.getItem(TAB_STORAGE_KEY);
     switchTab(VALID_TABS.has(savedTab) ? savedTab : 'devices');
+    if (typeof HistoryNav !== 'undefined' && HistoryNav.start) {
+        HistoryNav.start(currentTab);
+    }
 });
 
 async function logout() {
     try {
         await axios.post('/api/auth/logout');
     } catch (e) { /* ignore */ }
-    window.location.href = '/login';
+    window.location.replace('/login');
 }
 
-function switchTab(tab) {
+function switchTab(tab, options) {
     if (!VALID_TABS.has(tab)) tab = 'devices';
+    const opts = options || {};
     const prevTab = currentTab;
     currentTab = tab;
     sessionStorage.setItem(TAB_STORAGE_KEY, tab);
@@ -767,6 +773,9 @@ function switchTab(tab) {
         } else {
             loadSystemLogs();
         }
+    }
+    if (typeof HistoryNav !== 'undefined' && HistoryNav.onTabChange) {
+        HistoryNav.onTabChange(tab, opts);
     }
 }
 
