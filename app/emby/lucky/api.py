@@ -44,7 +44,7 @@ def normalize_lucky_base_url(value: str) -> str:
     if not raw:
         return ''
     if not raw.startswith(('http://', 'https://')):
-        raw = f'https://{raw}'
+        raw = f'http://{raw}'  # Lucky 管理端默认 http
     return raw.rstrip('/')
 
 
@@ -243,11 +243,12 @@ class LuckyClient:
                 timeout=self.timeout,
                 verify=self.verify_ssl,
             )
-        except requests.exceptions.SSLError:
-            return None, 'SSL 证书验证失败，可取消勾选「验证 SSL 证书」'
+        except requests.exceptions.SSLError as exc:
+            logger.warning('Lucky SSL 错误 %s: %s', url, exc)
+            return None, f'Lucky SSL 握手失败（若管理端是 http 请关闭 HTTPS；自签证书请取消「验证 SSL 证书」）：{exc}'
         except requests.RequestException as exc:
-            logger.debug('Lucky 请求失败 %s: %s', path, exc)
-            return None, f'无法连接 Lucky 管理接口（{exc.__class__.__name__}）'
+            logger.warning('Lucky 请求失败 %s: %s', url, exc)
+            return None, f'无法连接 Lucky 管理接口 {self.base_url}（{exc.__class__.__name__}: {exc}）'
         if resp.status_code >= 400:
             body = (resp.text or '').strip()[:120]
             detail = f'：{body}' if body else ''
@@ -255,11 +256,12 @@ class LuckyClient:
         try:
             data = resp.json()
         except ValueError:
-            return None, 'Lucky 返回非 JSON'
+            return None, f'Lucky 返回非 JSON（HTTP {resp.status_code}，地址或端口是否为 Lucky 管理端？）'
         if not isinstance(data, dict):
             return None, 'Lucky 返回格式异常'
         if int(data.get('ret', 0) or 0) != 0:
-            return None, 'Lucky 接口返回失败'
+            msg = str(data.get('msg') or data.get('message') or '').strip()
+            return None, f'Lucky 接口返回失败（ret={data.get("ret")}{"：" + msg if msg else ""}）'
         return data, ''
 
     def test_connection(self) -> dict:

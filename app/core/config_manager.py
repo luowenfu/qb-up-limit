@@ -1503,13 +1503,13 @@ def _validate_emby_instance(inst: dict, existing_names: list = None,
 
 def validate_emby_instance_for_test(inst: dict, test_type: str = 'connectivity') -> dict:
     require_api = test_type == 'api'
-    require_lucky = test_type in ('lucky', 'lucky_rules', 'lucky_connect')
     require_host = test_type not in ('lucky', 'lucky_rules', 'lucky_connect')
     result = _validate_emby_instance(
         inst,
         require_name=False,
         require_api_key=require_api,
-        require_lucky=require_lucky,
+        # 测试时由下方按 test_type 单独校验；连通性/拉取规则阶段还没有已选规则
+        require_lucky=False,
         require_host=require_host,
     )
     api_key = inst.get('api_key') or ''
