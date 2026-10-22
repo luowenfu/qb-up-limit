@@ -178,6 +178,8 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
+    /* 窄屏：标签一律整组放第二行，每张卡片统一 */
+    .ev-head .ev-tags { display: flex; gap: 2px 6px; margin: 4px 0 0; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }
     .ev-meta { margin-top: 2px; line-height: 1.35; }
     .ev-prog { margin-top: 4px; }
