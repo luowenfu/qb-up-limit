@@ -89,64 +89,45 @@ def wait_seconds_for_failures(count: int) -> int:
     return min(MAX_DELAY_SECONDS, 2 ** (count - FAILS_BEFORE_DELAY))
 
 
-def _user_bucket(username: str):
-    """仅按用户名累计（不区分 IP），防止伪造 IP 绕过等待。"""
-    return ('*', (username or '').strip())
-
-
-def _retry_after_key(key, now: float) -> int:
-    entry = _entries.get(key)
-    if not entry:
-        return 0
-    until = entry.get('wait_until') or 0
-    if until > now:
-        return max(1, int(until - now + 0.999))
-    return 0
-
-
 def retry_after(ip: str, username: str) -> int:
-    """仍需等待时返回剩余秒数，否则返回 0。取 IP+账号 与 仅账号 两者中较长的等待。"""
+    """仍需等待时返回剩余秒数，否则返回 0。"""
     now = time.monotonic()
     with _lock:
-        return max(
-            _retry_after_key(_bucket(ip, username), now),
-            _retry_after_key(_user_bucket(username), now),
-        )
-
-
-def _record_failure_key(key, now: float) -> int:
-    entry = _entries.get(key)
-    if entry is None:
-        if len(_entries) >= _MAX_ENTRIES:
-            _evict()
-        entry = {'fails': 0, 'wait_until': 0, 'touched': now}
-        _entries[key] = entry
-    elif (entry.get('wait_until') or 0) > now:
-        return max(1, int(entry['wait_until'] - now + 0.999))
-    entry['fails'] = int(entry.get('fails') or 0) + 1
-    entry['touched'] = now
-    wait = wait_seconds_for_failures(entry['fails'])
-    if wait:
-        entry['wait_until'] = now + wait
-    else:
-        entry['wait_until'] = 0
-    return wait
+        entry = _entries.get(_bucket(ip, username))
+        if not entry:
+            return 0
+        until = entry.get('wait_until') or 0
+        if until > now:
+            return max(1, int(until - now + 0.999))
+        return 0
 
 
 def record_failure(ip: str, username: str) -> int:
     """记一次失败。若因此需要等待，返回等待秒数，否则返回 0。"""
     now = time.monotonic()
+    key = _bucket(ip, username)
     with _lock:
-        return max(
-            _record_failure_key(_bucket(ip, username), now),
-            _record_failure_key(_user_bucket(username), now),
-        )
+        entry = _entries.get(key)
+        if entry is None:
+            if len(_entries) >= _MAX_ENTRIES:
+                _evict()
+            entry = {'fails': 0, 'wait_until': 0, 'touched': now}
+            _entries[key] = entry
+        elif (entry.get('wait_until') or 0) > now:
+            return max(1, int(entry['wait_until'] - now + 0.999))
+        entry['fails'] = int(entry.get('fails') or 0) + 1
+        entry['touched'] = now
+        wait = wait_seconds_for_failures(entry['fails'])
+        if wait:
+            entry['wait_until'] = now + wait
+        else:
+            entry['wait_until'] = 0
+        return wait
 
 
 def record_success(ip: str, username: str) -> None:
     with _lock:
         _entries.pop(_bucket(ip, username), None)
-        _entries.pop(_user_bucket(username), None)
 
 
 def delay_message(seconds: int) -> str:
