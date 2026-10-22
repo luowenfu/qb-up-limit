@@ -81,7 +81,7 @@ export function qbCard(d, i, ord) {
         <header class="dev-head">
             <div class="dev-icon" title="qBittorrent"><img src="/static/img/qbittorrent-logo.svg" alt=""></div>
             <div class="dev-title">
-                <div class="dev-name" data-open-dev data-kind="qb" data-dev="${esc(d.name)}" title="查看设备详情">${esc(d.name)}</div>
+                <div class="dev-name" data-open-dev data-kind="qb" data-dev="${esc(d.name)}" title="${esc(d.name)}">${esc(d.name)}</div>
                 <div class="dev-url">${dot(d)}${urlLine(d, 'qb')}</div>
             </div>
             <div class="dev-chips">
@@ -172,7 +172,7 @@ function sessionHtml(s, d) {
             : '');
     const poster = posterSrc ? `<img src="${esc(posterSrc)}" alt="" onerror="this.remove()">` : '';
     return `<div class="session"><div class="poster">▶${poster}</div><div class="session-main">
-        <div class="session-title">${esc(sessionTitle(s))}</div>
+        <div class="session-title" title="${esc(sessionTitle(s))}">${esc(sessionTitle(s))}</div>
         <div class="session-tags">${tipTag(who, wan ? 'who' : 'who lan', sessionUserTip(s))}${mode ? tipTag(mode.label, mode.cls, mode.tip) : ''}${browse ? '<span class="tag emby">选片</span>' : ''}</div>
         ${browse ? '' : `<div class="session-meter">
             ${wan ? `<div class="session-speed">${speed}</div><div class="session-up${anomaly ? ' warn has-tip' : ''}">${anomaly ? `上传 异常${anomalyTip()}` : `上传 ${fmtBytes(s.estimated_upload_bytes_live || 0, base)}`}</div>` : ''}
@@ -194,7 +194,7 @@ export function embyCard(d, i, ord) {
         <header class="dev-head emby">
             <div class="dev-icon" title="Emby"><img src="/static/img/emby-icon.svg" alt=""></div>
             <div class="dev-title">
-                <div class="dev-name" data-open-dev data-kind="emby" data-dev="${esc(d.name)}" title="查看设备详情">${esc(d.name)}</div>
+                <div class="dev-name" data-open-dev data-kind="emby" data-dev="${esc(d.name)}" title="${esc(d.name)}">${esc(d.name)}</div>
                 <div class="dev-url">${dot(d)}${urlLine(d, 'emby')}</div>
             </div>
             <div class="dev-chips">

@@ -175,9 +175,8 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
-    /* 第一行固定放名称和时间，标签整体换到下一行；再窄时名称文字自己折行，时间始终在第一行 */
+    /* 第一行固定放名称和时间，标签整体换到下一行；再窄时名称截成省略号，时间始终在第一行 */
     .ev-name { flex: 1 1 0; }
-    .ev-name b { white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
     .ev-tags { order: 3; flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
     .ev-item time { order: 2; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }

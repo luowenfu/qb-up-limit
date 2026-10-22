@@ -346,7 +346,7 @@ function cumulativePie(uploaded, downloaded) {
     const parts = [['上传合计', up, '#3b82f6'], ['下载合计', down, '#10b981']];
     const total = up + down;
     const rows = parts.map((row, i) => `
-        <div class="rank-row"><span class="rank-no">${i + 1}</span><div><div class="rank-name">${esc(row[0])}</div><div class="rank-bar"><i style="width:${total ? row[1] / total * 100 : 0}%;background:${row[2]}"></i></div></div><span class="rank-v num">${fmtBytes(row[1])}</span></div>`).join('');
+        <div class="rank-row"><span class="rank-no">${i + 1}</span><div><div class="rank-name" title="${esc(row[0])}">${esc(row[0])}</div><div class="rank-bar"><i style="width:${total ? row[1] / total * 100 : 0}%;background:${row[2]}"></i></div></div><span class="rank-v num">${fmtBytes(row[1])}</span></div>`).join('');
     return `<div class="share-pie">${donut(parts, fmtBytes(total))}<div class="rank">${rows}</div></div>`;
 }
 
