@@ -4,6 +4,7 @@ import json
 import os
 import logging
 import threading
+import uuid
 
 from itsdangerous import URLSafeSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -43,10 +44,18 @@ def _read_json(path: str, default):
 
 def _write_json(path: str, data) -> None:
     _ensure_parent(path)
-    tmp_path = f'{path}.tmp'
-    with open(tmp_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+    # 临时文件名带唯一后缀，避免并发写同一路径时互相覆盖/删除对方的 tmp
+    tmp_path = f'{path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.tmp'
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def ensure_data_key() -> str:

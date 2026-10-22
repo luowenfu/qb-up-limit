@@ -170,6 +170,7 @@ def api_emby_debug_traffic_config_update():
 
 
 _POSTER_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
+_POSTER_ALLOWED_MIMES = frozenset(('image/jpeg', 'image/png', 'image/webp', 'image/gif'))
 
 
 @bp.route('/api/emby/poster')
@@ -190,9 +191,12 @@ def api_emby_poster():
     except Exception as e:
         logger.error(f'API /emby/poster 错误: {e}', exc_info=True)
         return jsonify({'success': False, 'error': GENERIC_API_ERROR}), 500
-    if not content:
+    if not content or mime not in _POSTER_ALLOWED_MIMES:
         return '', 404
-    return Response(content, mimetype=mime, headers={'Cache-Control': 'private, max-age=86400'})
+    return Response(content, mimetype=mime, headers={
+        'Cache-Control': 'private, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
+    })
 
 
 @bp.route('/api/emby/sessions')

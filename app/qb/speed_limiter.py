@@ -143,6 +143,8 @@ def detect_external_limit_change(qb_client, cycle_uploaded_bytes: int,
     """
     if alt_speed_limits_active:
         return False
+    if getattr(qb_client, 'is_speed_testing', False):
+        return False
 
     if current_kbps is None:
         current_limit_bytes = qb_client.get_current_upload_limit()

@@ -1467,8 +1467,10 @@ class EmbyClient:
         )
         if resp is None or resp.status_code >= 400 or not resp.content:
             return None, ''
-        mime = (resp.headers.get('Content-Type') or 'image/jpeg').split(';', 1)[0].strip()
-        if not mime.startswith('image/'):
+        mime = (resp.headers.get('Content-Type') or 'image/jpeg').split(';', 1)[0].strip().lower()
+        if mime in ('image/jpg', 'image/pjpeg'):
+            mime = 'image/jpeg'
+        if mime not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
             return None, ''
         return resp.content, mime
 

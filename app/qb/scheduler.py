@@ -581,6 +581,8 @@ class TrafficMonitor:
             prev = self._live_cache.get(name, {})
         if not prev.get('is_online'):
             return False
+        if getattr(client, 'is_speed_testing', False):
+            return False
 
         new_global = int(limit_info.get('global_upload_limit_kbps') or 0)
         new_alt = int(limit_info.get('alt_upload_limit_kbps') or 0)

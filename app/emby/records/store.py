@@ -1,5 +1,6 @@
 """自写播放段记录：以 /Sessions 为真相源，热更新 JSON。"""
 
+import copy
 import logging
 import os
 import threading
@@ -34,6 +35,8 @@ _lock = threading.RLock()
 _runtime: Dict[str, dict] = {}
 _pending_stores: Dict[str, dict] = {}
 _flush_timers: Dict[str, threading.Timer] = {}
+# 按文件路径的写盘锁：同一文件同一时刻只允许一次写入
+_write_locks: Dict[str, threading.Lock] = {}
 
 _PLAYBACK_STATUSES = frozenset({'playing', 'ended', 'incomplete'})
 
@@ -154,21 +157,39 @@ def _load_store(instance_name: str) -> dict:
     return data
 
 
+def _get_write_lock(path: str) -> threading.Lock:
+    with _lock:
+        wlock = _write_locks.get(path)
+        if wlock is None:
+            wlock = threading.Lock()
+            _write_locks[path] = wlock
+        return wlock
+
+
 def _write_store_now(store: dict) -> None:
+    name = (store.get('instance_name') or '').strip()
     path = _store_path(store.get('instance_name') or '')
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    store['records'] = _trim_records(store.get('records') or [])
-    _write_json(path, store)
+    with _get_write_lock(path):
+        # 在写锁内取最新内存数据快照，避免旧快照覆盖新数据
+        with _lock:
+            pending = _pending_stores.pop(name, None) if name else None
+            if pending is not None:
+                _cancel_flush_timer(name)
+                store = pending
+            store['records'] = _trim_records(store.get('records') or [])
+            snapshot = copy.deepcopy(store)
+        _write_json(path, snapshot)
 
 
 def _cancel_flush_timer(instance_name: str) -> None:
-    timer = _flush_timers.pop(instance_name, None)
+    with _lock:
+        timer = _flush_timers.pop(instance_name, None)
     if timer is not None:
         timer.cancel()
 
 
 def _schedule_flush(instance_name: str) -> None:
-    _cancel_flush_timer(instance_name)
 
     def _run():
         with _lock:
@@ -179,8 +200,12 @@ def _schedule_flush(instance_name: str) -> None:
 
     timer = threading.Timer(_SAVE_DEBOUNCE_SECONDS, _run)
     timer.daemon = True
-    _flush_timers[instance_name] = timer
-    timer.start()
+    with _lock:
+        old = _flush_timers.pop(instance_name, None)
+        if old is not None:
+            old.cancel()
+        _flush_timers[instance_name] = timer
+        timer.start()
 
 
 def flush_pending_store(instance_name: str) -> None:

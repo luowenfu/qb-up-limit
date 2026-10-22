@@ -2,6 +2,7 @@ import qbittorrentapi
 import logging
 import threading
 from typing import Optional, Dict, Tuple
+from contextlib import contextmanager
 import time
 
 from requests.adapters import HTTPAdapter
@@ -306,6 +307,7 @@ class QBittorrentClient:
         self._reconnect_delay = 60
         self._last_connect_error = ''
         self._api_lock = threading.RLock()
+        self._needs_reconnect = False
         self._session_announced = False
         self._torrent_sync_rid = 0
         self._torrent_seen = {}
@@ -388,9 +390,23 @@ class QBittorrentClient:
         )
         return True
 
+    @contextmanager
+    def _api_session(self):
+        """持有 API 锁；若连接参数在锁忙时被修改，先断开旧连接再按新配置重连"""
+        with self._api_lock:
+            if self._needs_reconnect:
+                self._needs_reconnect = False
+                self._disconnect_unlocked()
+                self._last_connect_attempt = 0
+            yield
+
+    @property
+    def is_speed_testing(self) -> bool:
+        return is_speed_limit_testing(self.host, self.port, self.username, self.use_https)
+
     def connect(self, probe: bool = False) -> bool:
         """连接到 qBittorrent；probe=True 时按采集间隔快速探测，不启用 60s 冷却"""
-        with self._api_lock:
+        with self._api_session():
             return self._connect_unlocked(probe=probe)
 
     def _connect_unlocked(self, probe: bool = False) -> bool:
@@ -454,7 +470,7 @@ class QBittorrentClient:
 
     def probe_connect(self) -> bool:
         """离线探测：快速尝试连接后立即断开，不保留探测用会话"""
-        with self._api_lock:
+        with self._api_session():
             if self._connect_unlocked(probe=True):
                 self._disconnect_unlocked()
                 return True
@@ -462,7 +478,7 @@ class QBittorrentClient:
 
     def disconnect(self):
         """标记连接断开（不销毁配置）"""
-        with self._api_lock:
+        with self._api_session():
             self._disconnect_unlocked()
 
     def _disconnect_unlocked(self):
@@ -473,7 +489,7 @@ class QBittorrentClient:
 
     def fetch_for_collection(self, prefer_probe: bool = False) -> Optional[Dict]:
         """采集专用：在线优先正式连接；离线探测时优先快速探测再正式连接"""
-        with self._api_lock:
+        with self._api_session():
             if prefer_probe:
                 return self._fetch_via_probe_then_full()
 
@@ -538,7 +554,7 @@ class QBittorrentClient:
 
     def poll_torrent_events(self) -> list:
         """对比种子同步结果，返回添加、下载完成、删除。首次全量按种子时间补历史。"""
-        with self._api_lock:
+        with self._api_session():
             self._last_counter_rows = []
             if not self._connected or self._client is None:
                 return []
@@ -578,7 +594,7 @@ class QBittorrentClient:
 
     def list_torrent_uploads(self) -> Optional[list]:
         """当前种子的名称、累计上传下载、体积、分享率和 tracker。离线或失败时返回 None。"""
-        with self._api_lock:
+        with self._api_session():
             try:
                 if not self._connected:
                     if not self._connect_unlocked(probe=True):
@@ -624,7 +640,7 @@ class QBittorrentClient:
 
     def get_transfer_info(self, probe: bool = False) -> Optional[Dict]:
         """获取传输统计信息（供状态刷新等非采集路径使用）"""
-        with self._api_lock:
+        with self._api_session():
             if not self._connected:
                 if probe:
                     if not self._connect_unlocked(probe=True):
@@ -635,7 +651,7 @@ class QBittorrentClient:
 
     def get_upload_limit_info(self) -> Optional[Dict]:
         """读取常规/备用上传限速及备用模式状态（只读，不修改 qB 设置）"""
-        with self._api_lock:
+        with self._api_session():
             try:
                 if not self._connected:
                     if not self._connect_unlocked(probe=True):
@@ -664,7 +680,7 @@ class QBittorrentClient:
 
     def set_upload_limit(self, limit_bytes_per_sec: int) -> bool:
         """仅设置常规全局上传限速（app preferences up_limit），不触碰备用限速"""
-        with self._api_lock:
+        with self._api_session():
             try:
                 if not self._connected:
                     if not self._connect_unlocked(probe=True):
@@ -691,7 +707,7 @@ class QBittorrentClient:
 
     def set_alt_speed_limits_mode(self, enable: bool) -> bool:
         """切换 qB 全局/备用限速模式（不修改限速数值）"""
-        with self._api_lock:
+        with self._api_session():
             try:
                 if not self._connected:
                     if not self._connect_unlocked(probe=True):
@@ -765,6 +781,7 @@ class QBittorrentClient:
                 finally:
                     self._api_lock.release()
             else:
+                self._needs_reconnect = True
                 self._last_connect_attempt = 0
 
     def get_version(self) -> Optional[str]:
@@ -815,11 +832,38 @@ _speed_limit_test_locks_guard = threading.Lock()
 
 
 def _speed_limit_test_key(inst_config: dict) -> str:
-    host = str(inst_config.get('host', '')).strip().lower()
-    port = int(inst_config.get('port') or 0)
-    user = str(inst_config.get('username', '')).strip()
-    https = '1' if inst_config.get('use_https') else '0'
+    return _make_speed_test_key(
+        inst_config.get('host', ''), inst_config.get('port'),
+        inst_config.get('username', ''), inst_config.get('use_https'))
+
+
+def _make_speed_test_key(host, port, username, use_https) -> str:
+    host = str(host or '').strip().lower()
+    try:
+        port = int(port or 0)
+    except (TypeError, ValueError):
+        port = 0
+    user = str(username or '').strip()
+    https = '1' if use_https else '0'
     return f'{host}:{port}:{user}:{https}'
+
+
+# 限速测试进行中（及恢复后宽限期）的实例：key -> 截止时间戳；期间跳过外部修改检测
+_SPEED_TEST_GRACE_SECONDS = 2.0
+_speed_testing_until: Dict[str, float] = {}
+_speed_testing_guard = threading.Lock()
+
+
+def is_speed_limit_testing(host, port, username, use_https) -> bool:
+    key = _make_speed_test_key(host, port, username, use_https)
+    with _speed_testing_guard:
+        until = _speed_testing_until.get(key)
+        if until is None:
+            return False
+        if time.time() < until:
+            return True
+        _speed_testing_until.pop(key, None)
+        return False
 
 
 def _acquire_speed_limit_test_lock(inst_config: dict) -> Tuple[threading.Lock, bool]:
@@ -880,6 +924,9 @@ def run_speed_limit_test(inst_config: dict, test_limit_kbps: int = 12345) -> dic
 
     steps = []
     client = _make_test_client(inst_config)
+    testing_key = _speed_limit_test_key(inst_config)
+    with _speed_testing_guard:
+        _speed_testing_until[testing_key] = float('inf')
 
     def add_step(step_id: str, ok: bool, message: str):
         steps.append({'step': step_id, 'ok': ok, 'message': message})
@@ -938,6 +985,8 @@ def run_speed_limit_test(inst_config: dict, test_limit_kbps: int = 12345) -> dic
         return {'success': False, 'steps': steps}
     finally:
         _disconnect_test_client(client)
+        with _speed_testing_guard:
+            _speed_testing_until[testing_key] = time.time() + _SPEED_TEST_GRACE_SECONDS
         lock.release()
 
 

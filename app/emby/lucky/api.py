@@ -202,6 +202,23 @@ def choose_selected_candidates(
     return selected
 
 
+def mask_token(token: str) -> str:
+    """令牌打码：保留前 4 后 4 位，中间为 ***；长度 <= 8 时整体替换为 ***"""
+    token = str(token or '')
+    if len(token) <= 8:
+        return '***'
+    return f'{token[:4]}***{token[-4:]}'
+
+
+def mask_token_in_text(text, token: str) -> str:
+    """把文本中出现的令牌替换为打码形式（用于日志与返回给前端的错误）"""
+    text = str(text if text is not None else '')
+    token = str(token or '')
+    if not token:
+        return text
+    return text.replace(token, mask_token(token))
+
+
 def build_rule_label(candidate: dict) -> str:
     if not candidate:
         return ''
@@ -234,7 +251,7 @@ class LuckyClient:
             return None, '请填写 OpenToken'
         url = urljoin(f'{self.base_url}/', path.lstrip('/'))
         query = dict(params or {})
-        query['openToken'] = self.open_token
+        mask = lambda v: mask_token_in_text(v, self.open_token)  # noqa: E731
         try:
             resp = requests.get(
                 url,
@@ -244,13 +261,13 @@ class LuckyClient:
                 verify=self.verify_ssl,
             )
         except requests.exceptions.SSLError as exc:
-            logger.warning('Lucky SSL 错误 %s: %s', url, exc)
-            return None, f'Lucky SSL 握手失败（若管理端是 http 请关闭 HTTPS；自签证书请取消「验证 SSL 证书」）：{exc}'
+            logger.warning('Lucky SSL 错误 %s: %s', mask(url), mask(exc))
+            return None, mask(f'Lucky SSL 握手失败（若管理端是 http 请关闭 HTTPS；自签证书请取消「验证 SSL 证书」）：{exc}')
         except requests.RequestException as exc:
-            logger.warning('Lucky 请求失败 %s: %s', url, exc)
-            return None, f'无法连接 Lucky 管理接口 {self.base_url}（{exc.__class__.__name__}: {exc}）'
+            logger.warning('Lucky 请求失败 %s: %s', mask(url), mask(exc))
+            return None, mask(f'无法连接 Lucky 管理接口 {self.base_url}（{exc.__class__.__name__}: {exc}）')
         if resp.status_code >= 400:
-            body = (resp.text or '').strip()[:120]
+            body = mask((resp.text or '').strip())[:120]
             detail = f'：{body}' if body else ''
             return None, f'Lucky HTTP {resp.status_code}{detail}'
         try:
@@ -260,7 +277,7 @@ class LuckyClient:
         if not isinstance(data, dict):
             return None, 'Lucky 返回格式异常'
         if int(data.get('ret', 0) or 0) != 0:
-            msg = str(data.get('msg') or data.get('message') or '').strip()
+            msg = mask(str(data.get('msg') or data.get('message') or '').strip())
             return None, f'Lucky 接口返回失败（ret={data.get("ret")}{"：" + msg if msg else ""}）'
         return data, ''
 
