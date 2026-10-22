@@ -121,8 +121,8 @@
     .feed-body { max-height: 70vh; padding: 0 8px 8px; }
     body[data-detail="1"] #content { display: block; }
     body[data-detail="1"] .sec-events { position: static; max-height: none; height: auto; min-height: 0; display: block; }
-    /* 事件面板高度跟内容走，最高约七成屏幕，条目多时在卡片里面滑动 */
-    body[data-detail="1"] .sec-events > .panel { height: auto; max-height: 70vh; max-height: 70dvh; display: flex; flex-direction: column; overflow: hidden; }
+    /* 事件面板高度跟内容走，最高铺到底部导航栏上方（屏幕减去顶栏、底栏和上下留白），条目多时在卡片里面滑动 */
+    body[data-detail="1"] .sec-events > .panel { height: auto; max-height: calc(100vh - var(--tb-bar-h, 54px) - 108px - env(safe-area-inset-bottom)); max-height: calc(100dvh - var(--tb-bar-h, 54px) - 108px - env(safe-area-inset-bottom)); display: flex; flex-direction: column; overflow: hidden; }
     body[data-detail="1"] .sec-events .timeline { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
     body[data-detail="1"] .ev-fold { display: none; }
     body[data-detail="1"] #content > .sec { display: none; }
