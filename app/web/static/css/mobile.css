@@ -178,12 +178,13 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
-    /* 时间固定在第一行右边；左边名称和标签放得下就同一行，放不下标签换到下一行，名称再放不下就截成省略号 */
-    .ev-item-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-    .ev-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
-    /* 标签整组一起换行：第一行放不下就整组到下一行，组内放得下就同一行 */
-    .ev-head .ev-tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; max-width: 100%; }
-    .ev-item time { margin-left: 0; line-height: 22px; }
+    /* 时间浮在第一行右边；名称和标签整组顺着排，第一行放得下就同一行，放不下标签整组换到下一行（下一行用满整宽） */
+    .ev-item-top { display: block; }
+    .ev-item-top::after { content: ''; display: block; clear: both; }
+    .ev-item time { float: right; margin-left: 6px; line-height: 22px; }
+    .ev-head { display: inline; }
+    .ev-name { display: inline-flex; vertical-align: middle; margin-right: 6px; max-width: 100%; }
+    .ev-head .ev-tags { display: inline-flex; flex-wrap: wrap; align-items: center; vertical-align: middle; gap: 2px 6px; max-width: 100%; margin: 1px 0; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }
     .ev-meta { margin-top: 2px; line-height: 1.35; }
     .ev-prog { margin-top: 4px; }
