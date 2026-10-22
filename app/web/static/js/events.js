@@ -264,7 +264,7 @@ function eventCard(e, kind) {
     return `<article class="ev-item"${e.sid ? ` data-play="${esc(e.sid)}"` : ''}>
         <div class="ev-item-top">
             <span class="ev-name"><span class="ev-ico ${e.cls}">${I[e.icon]}</span><b>${esc(e.title)}</b></span>
-            ${whoTag}${modeTag}${upTag}${devTag}
+            ${(whoTag + modeTag + upTag + devTag) ? `<span class="ev-tags">${whoTag}${modeTag}${upTag}${devTag}</span>` : ''}
             <time class="num${dur ? ' has-tip' : ''}">${timeLabel(e)}${dur}</time>
         </div>
         ${(e.descParts || []).length ? `<div class="ev-desc">${e.descParts.map(part => `<span>${part}</span>`).join('')}</div>` : ''}

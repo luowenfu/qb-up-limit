@@ -175,6 +175,9 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
+    /* 第一行先放名称和时间，标签整体换到下一行；再窄时名称和时间各占一行，时间不折行 */
+    .ev-tags { order: 3; flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
+    .ev-item time { order: 2; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }
     .ev-meta { margin-top: 2px; line-height: 1.35; }
     .ev-prog { margin-top: 4px; }
