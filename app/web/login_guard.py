@@ -78,8 +78,22 @@ def resolve_client_ip(remote_addr: str, forwarded_for: str = '', real_ip: str = 
     return parts[-count]
 
 
+# 仅按账号累计的桶，IP 位置固定为 '*'，只对未带有效信任设备 Cookie 的请求生效
+USER_ONLY_IP = '*'
+
+
 def _bucket(ip: str, username: str):
     return ((ip or '').strip() or 'unknown', (username or '').strip())
+
+
+def _remaining(key, now) -> int:
+    entry = _entries.get(key)
+    if not entry:
+        return 0
+    until = entry.get('wait_until') or 0
+    if until > now:
+        return max(1, int(until - now + 0.999))
+    return 0
 
 
 def wait_seconds_for_failures(count: int) -> int:
@@ -89,45 +103,50 @@ def wait_seconds_for_failures(count: int) -> int:
     return min(MAX_DELAY_SECONDS, 2 ** (count - FAILS_BEFORE_DELAY))
 
 
-def retry_after(ip: str, username: str) -> int:
-    """仍需等待时返回剩余秒数，否则返回 0。"""
+def retry_after(ip: str, username: str, trusted: bool = False) -> int:
+    """仍需等待时返回剩余秒数，否则返回 0。信任设备只看 IP+账号桶，陌生设备另取账号桶的较大值。"""
     now = time.monotonic()
     with _lock:
-        entry = _entries.get(_bucket(ip, username))
-        if not entry:
-            return 0
-        until = entry.get('wait_until') or 0
-        if until > now:
-            return max(1, int(until - now + 0.999))
-        return 0
-
-
-def record_failure(ip: str, username: str) -> int:
-    """记一次失败。若因此需要等待，返回等待秒数，否则返回 0。"""
-    now = time.monotonic()
-    key = _bucket(ip, username)
-    with _lock:
-        entry = _entries.get(key)
-        if entry is None:
-            if len(_entries) >= _MAX_ENTRIES:
-                _evict()
-            entry = {'fails': 0, 'wait_until': 0, 'touched': now}
-            _entries[key] = entry
-        elif (entry.get('wait_until') or 0) > now:
-            return max(1, int(entry['wait_until'] - now + 0.999))
-        entry['fails'] = int(entry.get('fails') or 0) + 1
-        entry['touched'] = now
-        wait = wait_seconds_for_failures(entry['fails'])
-        if wait:
-            entry['wait_until'] = now + wait
-        else:
-            entry['wait_until'] = 0
+        wait = _remaining(_bucket(ip, username), now)
+        if not trusted:
+            wait = max(wait, _remaining(_bucket(USER_ONLY_IP, username), now))
         return wait
+
+
+def record_failure(ip: str, username: str, trusted: bool = False) -> int:
+    """记一次失败。若因此需要等待，返回等待秒数，否则返回 0。陌生设备同时计入账号桶。"""
+    now = time.monotonic()
+    with _lock:
+        wait = _record_locked(_bucket(ip, username), now)
+        if not trusted:
+            wait = max(wait, _record_locked(_bucket(USER_ONLY_IP, username), now))
+        return wait
+
+
+def _record_locked(key, now) -> int:
+    """调用方需持有 _lock。"""
+    entry = _entries.get(key)
+    if entry is None:
+        if len(_entries) >= _MAX_ENTRIES:
+            _evict()
+        entry = {'fails': 0, 'wait_until': 0, 'touched': now}
+        _entries[key] = entry
+    elif (entry.get('wait_until') or 0) > now:
+        return max(1, int(entry['wait_until'] - now + 0.999))
+    entry['fails'] = int(entry.get('fails') or 0) + 1
+    entry['touched'] = now
+    wait = wait_seconds_for_failures(entry['fails'])
+    if wait:
+        entry['wait_until'] = now + wait
+    else:
+        entry['wait_until'] = 0
+    return wait
 
 
 def record_success(ip: str, username: str) -> None:
     with _lock:
         _entries.pop(_bucket(ip, username), None)
+        _entries.pop(_bucket(USER_ONLY_IP, username), None)
 
 
 def delay_message(seconds: int) -> str:

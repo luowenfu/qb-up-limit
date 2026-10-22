@@ -19,8 +19,10 @@ from core.secrets_store import needs_setup
 from core.secrets_store import set_web_credentials
 from core.secrets_store import verify_web_password
 from web.auth import client_ip
+from web.auth import is_trusted_device
 from web.auth import login_user
 from web.auth import logout_user
+from web.auth import set_trusted_device_cookie
 from web.auth import sync_session_after_password_change
 from web.auth import verify_credentials
 from web.common import GENERIC_API_ERROR
@@ -40,8 +42,8 @@ def _text(data: dict, *keys: str) -> str:
     return ''
 
 
-def _delay_response(ip: str, username: str):
-    wait = retry_after(ip, username)
+def _delay_response(ip: str, username: str, trusted: bool = False):
+    wait = retry_after(ip, username, trusted)
     if wait <= 0:
         return None
     logger.warning('登录尝试需要等待，IP %s，账号 %s，剩余 %s 秒', ip, username or '-', wait)
@@ -122,11 +124,12 @@ def api_auth_login():
         username = str(data.get('username', '')).strip()
         password = data.get('password', '')
         ip = client_ip()
-        delayed = _delay_response(ip, username)
+        trusted = is_trusted_device(username)
+        delayed = _delay_response(ip, username, trusted)
         if delayed:
             return delayed
         if not verify_credentials(username, '' if password is None else str(password)):
-            wait = record_failure(ip, username)
+            wait = record_failure(ip, username, trusted)
             logger.warning('登录失败，IP %s，账号 %s', ip, username or '-')
             if wait:
                 return jsonify({
@@ -137,7 +140,7 @@ def api_auth_login():
         record_success(ip, username)
         remember = bool(data.get('remember'))
         login_user(username, remember=remember)
-        return jsonify({'success': True, 'username': username})
+        return set_trusted_device_cookie(jsonify({'success': True, 'username': username}), username)
     except Exception as e:
         logger.error(f"API /auth/login 错误: {e}", exc_info=True)
         return jsonify({'success': False, 'error': GENERIC_API_ERROR}), 500

@@ -113,7 +113,48 @@ def login_user(username: str, remember: bool = False):
     session.permanent = bool(remember)
 
 
+TRUSTED_DEVICE_COOKIE = 'qbul_td'
+TRUSTED_DEVICE_MAX_AGE = 365 * 24 * 3600
+_TRUSTED_DEVICE_SALT = 'qbul-trusted-device'
+
+
+def _trusted_serializer():
+    from flask import current_app
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(current_app.secret_key, salt=_TRUSTED_DEVICE_SALT)
+
+
+def make_trusted_device_token(username: str) -> str:
+    """信任设备令牌：绑定账号与密码版本，改密码后全部失效。"""
+    from core.secrets_store import get_pw_ver
+    return _trusted_serializer().dumps({'u': username, 'v': get_pw_ver()})
+
+
+def is_trusted_device(username: str) -> bool:
+    """当前请求带有该账号、当前密码版本的有效信任设备 Cookie。"""
+    from core.secrets_store import get_pw_ver
+    token = request.cookies.get(TRUSTED_DEVICE_COOKIE, '')
+    if not token or not username:
+        return False
+    try:
+        data = _trusted_serializer().loads(token, max_age=TRUSTED_DEVICE_MAX_AGE)
+        return (isinstance(data, dict) and data.get('u') == username
+                and int(data.get('v')) == int(get_pw_ver()))
+    except Exception:
+        return False
+
+
+def set_trusted_device_cookie(response, username: str):
+    response.set_cookie(
+        TRUSTED_DEVICE_COOKIE, make_trusted_device_token(username),
+        max_age=TRUSTED_DEVICE_MAX_AGE, httponly=True, samesite='Lax',
+        secure=request.is_secure, path='/',
+    )
+    return response
+
+
 def logout_user():
+    # 只清会话，不删信任设备 Cookie：它标识的是设备而不是会话
     session.clear()
 
 
