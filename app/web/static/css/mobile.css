@@ -175,10 +175,10 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
-    /* 第一行固定放名称和时间，标签整体换到下一行；再窄时名称截成省略号，时间始终在第一行 */
-    .ev-name { flex: 1 1 0; }
-    .ev-tags { order: 3; flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
-    .ev-item time { order: 2; }
+    /* 时间固定在第一行右边；左边名称和标签放得下就同一行，放不下标签换到下一行，名称再放不下就截成省略号 */
+    .ev-item-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+    .ev-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+    .ev-item time { margin-left: 0; line-height: 22px; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }
     .ev-meta { margin-top: 2px; line-height: 1.35; }
     .ev-prog { margin-top: 4px; }
