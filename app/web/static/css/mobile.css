@@ -139,6 +139,7 @@
         border-top: 1px solid var(--line);
     }
     body[data-detail="1"] .detail-tabs { display: grid; }
+    body[data-detail="1"] .to-top { right: 14px; bottom: calc(76px + env(safe-area-inset-bottom)); }
     .detail-tabs button {
         height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
         font-size: 11px; font-weight: 650; color: var(--text-3); white-space: nowrap;

@@ -104,3 +104,5 @@
 .toast.out { opacity: 0; transform: translateY(-6px); transition: opacity .2s, transform .2s; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-10px) scale(.97); } to { opacity: 1; transform: none; } }
 .full-tip { position: fixed; z-index: 450; max-width: calc(100vw - 16px); padding: 6px 10px; border-radius: 8px; background: rgba(15, 23, 42, .94); color: #fff; font-size: 13px; line-height: 1.45; word-break: break-all; box-shadow: 0 8px 20px -8px rgba(15, 23, 42, .5); pointer-events: none; }
+.to-top { position: fixed; right: 20px; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 95; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: var(--card); color: var(--text-1); border: 1px solid var(--line); box-shadow: 0 8px 20px -8px rgba(15, 23, 42, .35); opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s, transform .2s; }
+.to-top.show { opacity: 1; transform: none; pointer-events: auto; }
