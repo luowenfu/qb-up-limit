@@ -166,6 +166,8 @@
     .sec-events, .sec-events .panel, .timeline { min-width: 0; max-width: 100%; }
     .field.search { flex: 1 1 100%; }
     .tool-r { margin-left: 0; }
+    /* 事件记录筛选：右侧两项拆开排，宽度不够时先把「最近 N 天」换行，再换「排除局域网」 */
+    .sec-events .toolbar .tool-r { display: contents; }
     .tool-r .field { max-width: 100%; }
     .range-field, .range-field.is-day, .range-field:not(.is-day) { width: 100%; }
     .tool-r:has(.range-quick) { width: auto; max-width: 100%; margin-left: 0; justify-content: flex-start; }
