@@ -1,7 +1,7 @@
-/* 手机上看被截成省略号的全名：点一下（按钮、可点的名称用长按）弹出全名气泡，点别处或 3 秒后消失 */
+/* 手机上看被截成省略号的全名：点一下（按钮、可点的名称用长按）弹出全名气泡，点别处或滑动页面时消失 */
 
 const touch = matchMedia('(hover: none)').matches;
-let tip = null, timer = 0, pressTimer = 0, pressed = false;
+let tip = null, pressTimer = 0, pressed = false;
 
 function cut(el) {
     const t = el.querySelector(':scope > span:first-child') || el;
@@ -14,7 +14,7 @@ function target(node) {
     return cut(el) ? el : null;
 }
 
-function hide() { if (tip) { tip.remove(); tip = null; } clearTimeout(timer); }
+function hide() { if (tip) { tip.remove(); tip = null; } }
 
 function show(el) {
     hide();
@@ -27,7 +27,6 @@ function show(el) {
     const top = r.bottom + h + 12 > innerHeight ? r.top - h - 6 : r.bottom + 6;
     tip.style.left = left + 'px';
     tip.style.top = Math.max(8, top) + 'px';
-    timer = setTimeout(hide, 3000);
 }
 
 const clickable = el => el.closest('button, a, [data-open-dev], [data-nav]');
