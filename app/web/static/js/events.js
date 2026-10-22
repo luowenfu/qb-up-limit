@@ -6,7 +6,7 @@ import { I } from './icons.js';
 import {
     dayTitle, esc, fmtBytes, fmtDuration, hhmm, isLanIp, parseTime, ymd,
 } from './format.js';
-import { state, embyList } from './store.js';
+import { state, embyList, eventsRangeDays } from './store.js';
 
 const DAY = 86400000;
 const FOLD_CARET = '<svg class="feed-caret" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -205,8 +205,8 @@ async function fillEncoder(rows) {
 async function loadEmby() {
     const names = state.eventsDevice ? [state.eventsDevice] : embyList().map(d => d.name);
     const [playback, ...browses] = await Promise.all([
-        api.get(`/api/emby/playback-records${q({ instance: state.eventsDevice, limit: 500 })}`).then(r => r.data || []).catch(() => []),
-        ...names.map(n => api.get(`/api/emby/browse-records${q({ instance: n, limit: 200 })}`).then(r => r.data || []).catch(() => [])),
+        api.get(`/api/emby/playback-records${q({ instance: state.eventsDevice, days: 90, limit: 5000 })}`).then(r => r.data || []).catch(() => []),
+        ...names.map(n => api.get(`/api/emby/browse-records${q({ instance: n, days: 90, limit: 5000 })}`).then(r => r.data || []).catch(() => [])),
     ]);
     const plays = (await fillEncoder(playback)).map(playbackEvent);
     return [...plays, ...browses.flat().map(browseEvent)].filter(e => e.t);
@@ -356,12 +356,13 @@ export function bindEventPop() {
 
 /* ---------- 页面 ---------- */
 const TYPE_TABS = [['all', '全部'], ['torrent', '种子'], ['limit', '限速'], ['plan', '周期计划'], ['alert', '异常']];
-const RANGES = [[7, '最近 7 天'], [30, '最近 30 天'], [0, '全部']];
+const RANGES = [[7, '最近 7 天'], [30, '最近 30 天'], [90, '最近 90 天']];
 
 /** 取数据并生成 html */
 export async function renderEvents(kind) {
+    state.eventsDays = eventsRangeDays(state.eventsDays);
     const all = (kind === 'emby' ? await loadEmby() : await loadQb()).sort((a, b) => b.t - a.t);
-    const since = state.eventsDays ? Date.now() - state.eventsDays * DAY : 0;
+    const since = Date.now() - state.eventsDays * DAY;
     let list = all.filter(e => e.t.getTime() >= since);
     if (kind === 'emby') {
         if (state.eventsHideLan) list = list.filter(e => !e.lan);

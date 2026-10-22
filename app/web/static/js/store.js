@@ -144,6 +144,14 @@ const PAGE_TABS = new Set(['card', 'events', 'chart']);
 const PAGE_RANGES = new Set(['day', 'month', 'total']);
 const CHART_RANGES = new Set(['day', 'month']);
 const PAGE_SPANS = new Set(['6', '12', '24', 'all']);
+const EVENT_DAY_CHOICES = new Set([7, 30, 90]);
+
+/** 事件天数：0（旧的「全部」）以及不在 7/30/90 里的值，按最近 90 天 */
+export function eventsRangeDays(value) {
+    const n = Number(value);
+    return EVENT_DAY_CHOICES.has(n) ? n : 90;
+}
+
 const PAGE_KEY = 'qb-page';
 let pageSig = '';
 
@@ -161,7 +169,7 @@ export function pageSnapshot() {
         statsUser: state.statsUser || '',
         eventsType: state.eventsType || 'all',
         eventsUser: state.eventsUser || '',
-        eventsDays: Number(state.eventsDays) || 7,
+        eventsDays: eventsRangeDays(state.eventsDays),
         eventsHideLan: !!state.eventsHideLan,
         logSrc: state.logSrc || 'all',
         logLv: state.logLv || 'all',
@@ -183,7 +191,7 @@ function applyPage(saved) {
     if (typeof saved.statsUser === 'string') state.statsUser = saved.statsUser;
     if (typeof saved.eventsType === 'string') state.eventsType = saved.eventsType;
     if (typeof saved.eventsUser === 'string') state.eventsUser = saved.eventsUser;
-    if (Number(saved.eventsDays) > 0) state.eventsDays = Number(saved.eventsDays);
+    if (saved.eventsDays != null && saved.eventsDays !== '') state.eventsDays = eventsRangeDays(saved.eventsDays);
     if (typeof saved.eventsHideLan === 'boolean') state.eventsHideLan = saved.eventsHideLan;
     if (typeof saved.logSrc === 'string') state.logSrc = saved.logSrc;
     if (typeof saved.logLv === 'string') state.logLv = saved.logLv;

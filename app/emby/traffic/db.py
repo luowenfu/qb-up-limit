@@ -2449,6 +2449,7 @@ def list_browse_upload_records(
     limit: int = 200,
     *,
     min_upload_bytes: int = None,
+    since: str = None,
 ) -> list:
     """选片流量入库记录（用户视角日志数据源）。"""
     import core.config_manager as config_manager
@@ -2458,13 +2459,14 @@ def list_browse_upload_records(
     if min_upload_bytes is None:
         min_upload_bytes = config_manager.emby_browse_upload_min_bytes()
     min_upload_bytes = max(0, int(min_upload_bytes or 0))
-    limit = max(1, min(int(limit or 200), 500))
+    limit = max(1, min(int(limit or 200), 5000))
+    since_s = str(since or '').strip()
     _ensure_emby_schema()
     with _lock:
         conn = get_conn()
         try:
             c = conn.cursor()
-            c.execute('''
+            sql = '''
                 SELECT id, instance_name, segment_id, user_name, user_id,
                        stopped_at, estimated_upload_bytes, viewing_title,
                        settle_reason, series_name, episode_label, episode_title,
@@ -2472,9 +2474,14 @@ def list_browse_upload_records(
                 FROM emby_browse_upload_facts
                 WHERE instance_name = ?
                   AND estimated_upload_bytes >= ?
-                ORDER BY stopped_at DESC, id DESC
-                LIMIT ?
-            ''', (name, min_upload_bytes, limit))
+            '''
+            params = [name, min_upload_bytes]
+            if since_s:
+                sql += ' AND stopped_at >= ?'
+                params.append(since_s)
+            sql += ' ORDER BY stopped_at DESC, id DESC LIMIT ?'
+            params.append(limit)
+            c.execute(sql, params)
             rows = []
             for row in c.fetchall():
                 item = dict(row)

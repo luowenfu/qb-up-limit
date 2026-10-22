@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
 import emby.traffic.upload_sync as emby_playback_upload_sync
@@ -20,7 +20,8 @@ from core.secrets_store import _read_json, _write_json
 
 logger = logging.getLogger(__name__)
 
-MAX_STORED_RECORDS = 500
+RECORD_RETENTION_DAYS = 90
+MAX_STORED_RECORDS = 5000
 OFFLINE_TIMEOUT_SECONDS = 5 * 60
 STOP_GRACE_SECONDS = 5
 # 暂停抖动去重：卡片消失即时结案后，若会话卡片抖动回来（Emby web 暂停会
@@ -156,8 +157,7 @@ def _load_store(instance_name: str) -> dict:
 def _write_store_now(store: dict) -> None:
     path = _store_path(store.get('instance_name') or '')
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    records = store.get('records') or []
-    store['records'] = records[:MAX_STORED_RECORDS]
+    store['records'] = _trim_records(store.get('records') or [])
     _write_json(path, store)
 
 
@@ -279,6 +279,25 @@ def _ended_record_sort_key(rec: dict) -> str:
         rec.get('stopped_at') or rec.get('last_tick_at')
         or rec.get('started_at') or ''
     )
+
+
+def _record_on_or_after(rec: dict, cutoff: datetime) -> bool:
+    dt = _parse_iso(_ended_record_sort_key(rec))
+    return dt is not None and dt >= cutoff
+
+
+def _trim_records(records: list) -> list:
+    """正在播放永远保留；其余只留最近 RECORD_RETENTION_DAYS 天，总数不超过上限。"""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=RECORD_RETENTION_DAYS)
+    playing = []
+    others = []
+    for rec in records or []:
+        if rec.get('status') == 'playing':
+            playing.append(rec)
+        elif _record_on_or_after(rec, cutoff):
+            others.append(rec)
+    others.sort(key=_ended_record_sort_key, reverse=True)
+    return (playing + others)[:MAX_STORED_RECORDS]
 
 
 def _session_track_key(session: dict) -> tuple:
@@ -1146,11 +1165,7 @@ def run_recovery_scan(instance_name: str, sessions: list) -> Set[str]:
             _restart_recovery_finalize_unlocked(name, store, record)
             changed = True
         if changed:
-            records = store.get('records') or []
-            playing = [r for r in records if r.get('status') == 'playing']
-            others = [r for r in records if r.get('status') != 'playing']
-            others.sort(key=_ended_record_sort_key, reverse=True)
-            store['records'] = (playing + others)[:MAX_STORED_RECORDS]
+            store['records'] = _trim_records(store.get('records') or [])
             _save_store(store, immediate=True)
     return continuing_keys
 
@@ -1288,11 +1303,7 @@ def tick_from_sessions(instance_name: str, sessions: list, *,
                     needs_immediate_save = True
 
         if changed:
-            records = store.get('records') or []
-            playing = [r for r in records if r.get('status') == 'playing']
-            others = [r for r in records if r.get('status') != 'playing']
-            others.sort(key=_ended_record_sort_key, reverse=True)
-            store['records'] = (playing + others)[:MAX_STORED_RECORDS]
+            store['records'] = _trim_records(store.get('records') or [])
             _save_store(store, immediate=needs_immediate_save)
         return _wrap_return(changed, store)
 
@@ -1321,17 +1332,28 @@ def sync_upload_anomaly(instance_name: str, on_ids: list, off_ids: list) -> None
             _save_store(store, immediate=True)
 
 
-def list_records(instance_name: str = None, limit: int = 200) -> List[dict]:
+def list_records(instance_name: str = None, limit: int = 200,
+                 days: int = None) -> List[dict]:
     limit = max(1, min(int(limit or 200), MAX_STORED_RECORDS))
+    cutoff = None
+    if days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+
+    def _prepare(records: list) -> List[dict]:
+        rows = records
+        if cutoff is not None:
+            rows = [r for r in rows if _record_on_or_after(r, cutoff)]
+        playing = [r for r in rows if r.get('status') == 'playing']
+        others = [r for r in rows if r.get('status') != 'playing']
+        others.sort(key=_ended_record_sort_key, reverse=True)
+        return (playing + others)[:limit]
+
     if instance_name:
         store = _load_store(instance_name)
         records = list(store.get('records') or [])
         for rec in records:
             rec.setdefault('instance_name', instance_name)
-        playing = [r for r in records if r.get('status') == 'playing']
-        others = [r for r in records if r.get('status') != 'playing']
-        others.sort(key=_ended_record_sort_key, reverse=True)
-        return (playing + others)[:limit]
+        return _prepare(records)
 
     result = []
     if not os.path.isdir(EMBY_EVENTS_DIR):
@@ -1348,10 +1370,7 @@ def list_records(instance_name: str = None, limit: int = 200) -> List[dict]:
             item = dict(rec)
             item.setdefault('instance_name', inst)
             result.append(item)
-    playing = [r for r in result if r.get('status') == 'playing']
-    others = [r for r in result if r.get('status') != 'playing']
-    others.sort(key=_ended_record_sort_key, reverse=True)
-    return (playing + others)[:limit]
+    return _prepare(result)
 
 
 

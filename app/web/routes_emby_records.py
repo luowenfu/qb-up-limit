@@ -11,6 +11,7 @@ import logging
 import threading
 import time
 
+from datetime import timedelta
 from core.cycle import iter_cycle_periods
 from core.syslog_localize import localize_system_log_entry
 from emby.client import EmbyClient
@@ -306,6 +307,15 @@ def build_content_rank(instance_name: str, records: list, period: str,
         'play_count': play_count,
     }
 
+def _optional_query_days():
+    """可选 days：1~365。未传时返回 None，调用方保持原查询。"""
+    raw = request.args.get('days', None)
+    if raw is None or str(raw).strip() == '':
+        return None
+    days = int(str(raw).strip())
+    return min(365, max(1, days))
+
+
 @bp.route('/api/emby/playback-records')
 def api_emby_playback_records():
     err = emby_required()
@@ -314,14 +324,17 @@ def api_emby_playback_records():
     try:
         import emby.records.store as playback_record_store
         instance_name = request.args.get('instance')
+        days = _optional_query_days()
         limit = min(int(request.args.get('limit', 200)), playback_record_store.MAX_STORED_RECORDS)
         if instance_name:
             inst = config_manager.get_emby_instance(instance_name, state.emby_monitor.config)
             if not inst:
                 return jsonify({'success': False, 'error': '设备不存在'}), 404
-            records = playback_record_store.list_records(instance_name, limit=limit)
+            records = playback_record_store.list_records(
+                instance_name, limit=limit, days=days,
+            )
         else:
-            records = playback_record_store.list_records(limit=limit)
+            records = playback_record_store.list_records(limit=limit, days=days)
         return jsonify({'success': True, 'data': records})
     except Exception as e:
         logger.error(f'API /emby/playback-records 错误: {e}', exc_info=True)
@@ -339,14 +352,20 @@ def api_emby_browse_records():
             return jsonify({'success': False, 'error': '请选择设备'}), 400
         if not config_manager.get_emby_instance(instance_name, state.emby_monitor.config):
             return jsonify({'success': False, 'error': '设备不存在'}), 404
-        limit = min(int(request.args.get('limit', 200)), 500)
+        days = _optional_query_days()
+        limit = min(int(request.args.get('limit', 200)), 5000)
+        since = None
+        if days is not None:
+            since = (emby_traffic_db._now() - timedelta(days=days)).strftime(
+                '%Y-%m-%d %H:%M:%S',
+            )
         global_cfg = config_manager.get_global_config(state.emby_monitor.config)
         min_bytes = config_manager.emby_browse_upload_min_bytes(global_cfg)
         min_mb = config_manager.clamp_emby_browse_upload_min_mb(
             global_cfg.get('emby_browse_upload_min_mb', 1.0),
         )
         records = emby_traffic_db.list_browse_upload_records(
-            instance_name, limit=limit, min_upload_bytes=min_bytes,
+            instance_name, limit=limit, min_upload_bytes=min_bytes, since=since,
         )
         return jsonify({
             'success': True,
