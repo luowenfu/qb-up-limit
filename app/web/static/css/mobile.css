@@ -28,6 +28,7 @@
         color: var(--text-2);
     }
     .side-toggle:hover { background: #f1f5f9; color: var(--text); }
+    .brand-title { padding-right: 28px; }
     .icon-btn { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: var(--text); }
     .icon-btn:hover { background: #f1f5f9; }
     body.side-off .shell { display: block; }

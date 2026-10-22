@@ -18,14 +18,28 @@
 }
 .sidebar > :not(.nav-tree) { flex: none; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 2px 4px 4px; }
+.brand > div { min-width: 0; flex: 1; }
 .brand-logo {
     width: 40px; height: 40px; border-radius: 28%;
-    display: block;
+    display: block; flex-shrink: 0;
     box-shadow: 0 6px 16px -4px rgba(37, 99, 235, .55);
 }
-.brand-title { font-size: 15px; font-weight: 800; letter-spacing: .01em; color: var(--text); line-height: 1.25; }
-.brand-sub { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); }
-.ver { padding: 0 6px; border-radius: 6px; background: #f1f5f9; font-size: 10.5px; font-weight: 700; color: var(--text-2); }
+.brand-title {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0;
+    font-size: 15px; font-weight: 800; letter-spacing: .01em; color: var(--text); line-height: 1.25;
+}
+.brand-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-sub { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11.5px; color: var(--text-2); }
+.brand-sub > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-gh {
+    margin-left: auto; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px;
+    color: var(--text-2); text-decoration: none;
+}
+.brand-gh:hover { color: var(--accent); }
+.brand-gh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ver { flex: none; white-space: nowrap; padding: 0 6px; border-radius: 6px; background: #f1f5f9; font-size: 10.5px; font-weight: 700; color: var(--text-2); line-height: 16px; }
 
 .add-btn {
     height: 40px; border-radius: 11px;
