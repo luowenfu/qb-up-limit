@@ -118,7 +118,7 @@ document.addEventListener('click', e => {
     if (t.id === 'metricsSplit') { toggleMetricsDock(); return; }
     if (t.dataset.quick) {
         const [mode, which] = t.dataset.quick.split(':');
-        if ((mode !== 'day' && mode !== 'month') || (which !== 'prev' && which !== 'cur')) return;
+        if ((mode !== 'day' && mode !== 'month') || !['prev', 'cur', 'today', 'yday'].includes(which) || (mode === 'month' && (which === 'today' || which === 'yday'))) return;
         const saved = quickPreset(mode, which);
         const before = mode === 'month' ? visibleMonthRange() : visibleDayRange();
         if (state.statsRange === mode && saved.start === before.start && saved.end === before.end) return;

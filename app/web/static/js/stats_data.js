@@ -103,12 +103,14 @@ export function normalizeMonthRange(start, end) {
 export const visibleDayRange = () => normalizeDayRange(state.statsFrom, state.statsDate);
 export const visibleMonthRange = () => normalizeMonthRange(state.statsFrom, state.statsDate);
 
-/** 快捷范围。按天是上一个整月、本月 1 日到今天；按月是今年 1 月到本月、去年全年 */
+/** 快捷范围。按天是今天、昨天、上一个整月、本月 1 日到今天；按月是今年 1 月到本月、去年全年 */
 export function quickPreset(mode, which) {
     const now = new Date();
     const today = ymd(now);
     const thisMonth = ym(now);
     if (mode !== 'month') {
+        if (which === 'today') return { start: today, end: today };
+        if (which === 'yday') { const y = addDays(today, -1); return { start: y, end: y }; }
         if (which === 'cur') return { start: `${thisMonth}-01`, end: today };
         const prevEnd = addDays(`${thisMonth}-01`, -1);
         return { start: `${prevEnd.slice(0, 7)}-01`, end: prevEnd };

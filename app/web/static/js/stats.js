@@ -409,6 +409,8 @@ function toolbar(m, kind) {
     const max = defaultAnchor(day ? 'day' : 'month');
     const periodField = range === 'total' ? '' : `<div class="chart-ctrl range-field${day ? ' is-day' : ''}" data-range-field data-mode="${day ? 'day' : 'month'}" data-max="${max}"><span class="cap">时段</span>${rangeInput('stFrom', win.start, day)}<span class="sep">${RANGE_ARROW}</span>${rangeInput('stTo', win.end, day)}<button type="button" class="month-pick" data-range-open aria-label="${day ? '选择日期范围' : '选择月份范围'}">${I.cal.replace(/16/g, '14')}</button></div>`;
     const shortcuts = [
+        ['day', 'today', '今天'],
+        ['day', 'yday', '昨天'],
         ['day', 'prev', '上月'],
         ['day', 'cur', '本月'],
         ['month', 'cur', '今年'],
