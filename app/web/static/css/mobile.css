@@ -178,14 +178,14 @@
     .timeline { padding: 8px; }
     .ev-item { padding: 8px 10px; }
     .ev-item-top { column-gap: 6px; row-gap: 2px; }
-    /* 时间浮在第一行右边；名称和标签顺着排：放不下时先把用户名后面的标签换行，再不够用户名也换到下一行（仍在其他标签前面） */
+    /* 时间浮在第一行右边；标签整组跟在名称后面，第一行放不下就整组换到下一行（用满整宽），标签文字垂直居中 */
     .ev-item-top { display: block; }
     .ev-item-top::after { content: ''; display: block; clear: both; }
     .ev-item time { float: right; margin-left: 6px; line-height: 22px; }
     .ev-head { display: inline; }
     .ev-name { display: inline-flex; vertical-align: middle; margin-right: 6px; max-width: 100%; }
-    .ev-head .ev-tags { display: inline; }
-    .ev-head .tag { display: inline-block; vertical-align: middle; margin: 1px 6px 1px 0; }
+    .ev-head .ev-tags { display: inline-flex; flex-wrap: wrap; align-items: center; vertical-align: middle; gap: 2px 6px; max-width: 100%; margin: 1px 0; }
+    .ev-head .tag { display: inline-flex; align-items: center; height: 20px; line-height: 20px; }
     .ev-desc { margin-top: 2px; line-height: 1.35; }
     .ev-meta { margin-top: 2px; line-height: 1.35; }
     .ev-prog { margin-top: 4px; }
