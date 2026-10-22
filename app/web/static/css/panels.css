@@ -161,10 +161,13 @@ button.panel-name { width: 100%; font: inherit; font-size: 14px; font-weight: 75
 .day small { font-weight: 500; color: var(--text-3); }
 .ev-item { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: #fbfcfe; min-width: 0; max-width: 100%; }
 .ev-item:hover { border-color: #d6dde7; }
-.ev-item-top { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 4px; min-width: 0; max-width: 100%; }
-.ev-head, .ev-tags { display: contents; }
-.ev-item-top .tag { flex: none; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ev-name { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 100%; min-width: 0; overflow: hidden; }
+/* 所有设备统一：时间浮在第一行右边；宽度不够先让标签整组换行，再不够名称（播放/暂停）也挪下去排在标签前面，还不够标签再逐个折行 */
+.ev-item-top { display: block; min-width: 0; max-width: 100%; }
+.ev-item-top::after { content: ''; display: block; clear: both; }
+.ev-head { display: inline; }
+.ev-head .ev-tags { display: inline-flex; flex-wrap: wrap; align-items: center; vertical-align: middle; gap: 4px 8px; max-width: 100%; margin: 1px 0; }
+.ev-item-top .tag { display: inline-flex; align-items: center; height: 20px; flex: none; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-name { display: inline-flex; vertical-align: middle; margin-right: 8px; align-items: center; gap: 6px; flex: none; max-width: 100%; min-width: 0; overflow: hidden; }
 .ev-name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; color: var(--text); white-space: nowrap; }
 .ev-ico { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; flex: none; }
 .ev-ico svg { width: 15px; height: 15px; }
@@ -174,7 +177,7 @@ button.panel-name { width: 100%; font: inherit; font-size: 14px; font-weight: 75
 .ev-ico.warn { background: #fffbeb; color: #d97706; }
 .ev-ico.violet { background: #f5f3ff; color: var(--violet); }
 .ev-ico.gray { background: #f1f5f9; color: #94a3b8; }
-.ev-item time { order: 1; margin-left: auto; flex: none; max-width: 100%; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.ev-item time { float: right; margin-left: 8px; line-height: 22px; flex: none; max-width: 100%; font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .has-tip { cursor: help; }
 .tag.direct { background: #ecfdf5; color: #047857; }
 .tag.xc { background: #fff7ed; color: #c2410c; }
