@@ -1,5 +1,6 @@
 /* 入口：启动、导航、事件绑定、定时刷新 */
 
+import './fulltip.js';
 import * as api from './api.js';
 import { exportLogs, loadMoreLogs, logListHtml } from './syslogs.js';
 import {
