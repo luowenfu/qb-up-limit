@@ -1,3 +1,5 @@
+> 本仓库已改名为「媒体达量管理」，不再更新。请前往新仓库：https://github.com/luowenfu/media-up-limit
+
 # qb-up-limit
 
 # 核心功能
